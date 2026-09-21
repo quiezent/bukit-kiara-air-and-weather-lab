@@ -1,0 +1,27 @@
+# Local observations, forecast archives and private exports are never source.
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.log
+*.zip
+*.parquet
+*.pkl
+*.pickle
+*.gz
+*.csv
+*.tsv
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+backups/
+private/
+.DS_Store
+Thumbs.db
