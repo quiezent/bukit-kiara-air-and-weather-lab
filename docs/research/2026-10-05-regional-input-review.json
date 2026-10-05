@@ -1,0 +1,708 @@
+{
+  "schemaVersion": "bukit-kiara-public-aggregate-evidence-v1",
+  "reviewDate": "2026-10-05",
+  "timezone": "Asia/Kuala_Lumpur",
+  "scope": "October 5 morning study cutoff; completed outcomes only. This is an aggregate publication export, not a raw archive.",
+  "account": "I tested the same fixed learners with and without regional inputs. I kept the new numerical candidates out of production because these results do not establish reliable change prediction.",
+  "numericalPromotion": false,
+  "researchCandidatesActuallyIssuedAtTheirReconstructedIssueTimes": false,
+  "sourceFiles": [
+    {
+      "filename": "oct5_regional_candidate_results.json",
+      "sha256": "7e549871586871af323b3a26b86982053351d6160416b467ad1c81d6d1f5c3d8",
+      "role": "immutable input to this aggregate export; raw file not included"
+    },
+    {
+      "filename": "oct5_session_regional_results.json",
+      "sha256": "b08eb0f453755fa13f5f70e77a387e7b6ff20bfcfc9d38f3d1e28f761c602040",
+      "role": "immutable input to this aggregate export; raw file not included"
+    },
+    {
+      "filename": "oct5_regional_candidate_policy.json",
+      "sha256": "8ab563b624b88e39202e088f65c90b5c237f0192810706fe35015d66adf23e2f",
+      "role": "immutable input to this aggregate export; raw file not included"
+    },
+    {
+      "filename": "oct5_session_regional_policy.json",
+      "sha256": "72aa764a7755a1cf0ae1c58e28120fb956079681594e3495b2f3892dd3a4bcb4",
+      "role": "immutable input to this aggregate export; raw file not included"
+    },
+    {
+      "filename": "weather_session_model.py",
+      "sha256": "a379cb148917fd2784f7b1df4a72a7b8ff317d9c4b67ac8b06c811fd9d0ea7d0",
+      "role": "immutable input to this aggregate export; raw file not included"
+    }
+  ],
+  "metricDefinitions": {
+    "maeUgM3": "Mean absolute error in micrograms per cubic metre; lower is better.",
+    "p90AbsoluteErrorUgM3": "90th percentile of absolute forecast error in micrograms per cubic metre.",
+    "meaningfulDirectionThresholdUgM3": 10,
+    "correctDirectionCallsAtLeast10UgM3": "Actual and predicted changes from the same issue reference each reach 10 micrograms per cubic metre in the same direction.",
+    "falseChangeCalls": "Predicted rise or drop reaches the direction threshold without a matching actual threshold change in that direction; includes wrong-direction calls.",
+    "actualIssuedCorrectDirectionCount": "Threshold direction hits among observed changes, as stored in the actual-issued summary; zero observed qualifying changes is not evidence of forecasting failure or success.",
+    "largeEventThresholdUgM3": 20,
+    "point90": "Exact +90 minute point target represented by its covered 15-minute sensor median proxy.",
+    "mean90_210": "Duration-weighted covered PM2.5 mean over (+90,+210] minutes; not an instantaneous concentration at +210 minutes.",
+    "session": "Exact covered two-hour PM2.5 mean for the published or fixed query window."
+  },
+  "commonAvailabilityAndTrainingRules": {
+    "regionalNetworkFetchAndArchiveRecordingMustBothPrecedeOrEqualIssue": true,
+    "weatherNetworkFetchMustPrecedeOrEqualIssue": true,
+    "maximumRegionalAndWeatherAgeHours": 2,
+    "localSensorReferenceAndEveryFeatureBucketBoundedByPriorPublishedSensorWatermark": true,
+    "regionalInputsBackfilledBeforeArchiveStart": false,
+    "fitCutoff": "Asia/Kuala_Lumpur midnight",
+    "trainingTargetsMustCompleteStrictlyBeforeFitCutoff": true,
+    "preprocessingFittedOnTrainingSliceOnly": true,
+    "sensorAvailabilityCaveat": "Raw sensor rows lack per-reading first-fetch timestamps. Publication watermarks cannot fully reconstruct later replacements of readings."
+  },
+  "nearTermTrial": {
+    "policyVersion": "oct5_regional_candidate_policy_v1",
+    "policyFrozenBeforeOutcomePreparation": true,
+    "selectionMode": "none; fixed paired input ablations only",
+    "targets": {
+      "point90": {
+        "leadMinutes": 90,
+        "durationMinutes": 0
+      },
+      "mean90_210": {
+        "leadMinutes": 90,
+        "durationMinutes": 120
+      }
+    },
+    "fixedLearners": [
+      "basic31_ridge",
+      "regional_ridge",
+      "basic31_hgb",
+      "regional_hgb"
+    ],
+    "lookbackDays": 14,
+    "trainingOriginFrequencyMinutes": 60,
+    "issueOffsetSeconds": 300,
+    "minimumTrainingRows": 48,
+    "minimumCompletedTargetDays": 2,
+    "fixedSpacingSeconds": 12600,
+    "settings": {
+      "ridgeAlpha": 100.0,
+      "histGradientBoosting": {
+        "max_iter": 100,
+        "max_depth": 3,
+        "max_leaf_nodes": 7,
+        "min_samples_leaf": 40,
+        "l2_regularization": 50.0,
+        "learning_rate": 0.05,
+        "loss": "absolute_error",
+        "early_stopping": false,
+        "random_state": 1749
+      }
+    },
+    "regionalAddedFeatureCount": 16,
+    "regionalAddedFeatureMeaning": "Coarse modeled PM gradients, upstream-minus-local concentration, target modeled PM change, issued surface and 925 hPa wind components, rotation and signed transport proxies; learned inputs rather than direct corrections.",
+    "trainingSupport": [
+      {
+        "fitDate": "2026-10-03",
+        "target": "point90",
+        "trainingRows": 27,
+        "trainingCompletedTargetDates": 2,
+        "eligibleUnderExploratorySupportThreshold": false
+      },
+      {
+        "fitDate": "2026-10-03",
+        "target": "mean90_210",
+        "trainingRows": 24,
+        "trainingCompletedTargetDates": 2,
+        "eligibleUnderExploratorySupportThreshold": false
+      },
+      {
+        "fitDate": "2026-10-04",
+        "target": "point90",
+        "trainingRows": 51,
+        "trainingCompletedTargetDates": 3,
+        "eligibleUnderExploratorySupportThreshold": true
+      },
+      {
+        "fitDate": "2026-10-04",
+        "target": "mean90_210",
+        "trainingRows": 48,
+        "trainingCompletedTargetDates": 3,
+        "eligibleUnderExploratorySupportThreshold": true
+      },
+      {
+        "fitDate": "2026-10-05",
+        "target": "point90",
+        "trainingRows": 75,
+        "trainingCompletedTargetDates": 4,
+        "eligibleUnderExploratorySupportThreshold": true
+      },
+      {
+        "fitDate": "2026-10-05",
+        "target": "mean90_210",
+        "trainingRows": 72,
+        "trainingCompletedTargetDates": 4,
+        "eligibleUnderExploratorySupportThreshold": true
+      }
+    ],
+    "groups": {
+      "2026-10-04_point90": {
+        "role": "primary retrospective comparison",
+        "models": {
+          "persistence": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 6.140277777777778,
+            "p90AbsoluteErrorUgM3": 13.236666666666665,
+            "observedChangesAtLeast10UgM3": 5,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "basic31_ridge": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 5.391002882871717,
+            "p90AbsoluteErrorUgM3": 12.765549209318468,
+            "observedChangesAtLeast10UgM3": 5,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "regional_ridge": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 5.326814421784402,
+            "p90AbsoluteErrorUgM3": 12.31532806250367,
+            "observedChangesAtLeast10UgM3": 5,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "basic31_hgb": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 6.031944444444444,
+            "p90AbsoluteErrorUgM3": 13.503333333333341,
+            "observedChangesAtLeast10UgM3": 5,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "regional_hgb": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 6.031944444444444,
+            "p90AbsoluteErrorUgM3": 13.503333333333341,
+            "observedChangesAtLeast10UgM3": 5,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          }
+        },
+        "fixedSpacingCount": 6,
+        "unfinishedTargetsExcluded": 0
+      },
+      "2026-10-04_mean90_210": {
+        "role": "primary retrospective comparison",
+        "models": {
+          "persistence": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 7.2114583333333355,
+            "p90AbsoluteErrorUgM3": 12.53166666666667,
+            "observedChangesAtLeast10UgM3": 4,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "basic31_ridge": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 6.124124597557388,
+            "p90AbsoluteErrorUgM3": 10.977077238032226,
+            "observedChangesAtLeast10UgM3": 4,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "regional_ridge": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 6.004441826376119,
+            "p90AbsoluteErrorUgM3": 12.087388830475938,
+            "observedChangesAtLeast10UgM3": 4,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "basic31_hgb": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 7.135763888888891,
+            "p90AbsoluteErrorUgM3": 13.0775,
+            "observedChangesAtLeast10UgM3": 4,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "regional_hgb": {
+            "count": 24,
+            "issueDays": 1,
+            "targetDays": 2,
+            "maeUgM3": 7.135763888888891,
+            "p90AbsoluteErrorUgM3": 13.0775,
+            "observedChangesAtLeast10UgM3": 4,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          }
+        },
+        "fixedSpacingCount": 6,
+        "unfinishedTargetsExcluded": 0
+      },
+      "2026-10-05_point90": {
+        "role": "partial diagnostic; never model selection",
+        "models": {
+          "persistence": {
+            "count": 10,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 2.8466666666666662,
+            "p90AbsoluteErrorUgM3": 4.190000000000007,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "basic31_ridge": {
+            "count": 10,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 3.285098172617837,
+            "p90AbsoluteErrorUgM3": 4.97201797393647,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "regional_ridge": {
+            "count": 10,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 3.049380949550545,
+            "p90AbsoluteErrorUgM3": 4.624555114927672,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "basic31_hgb": {
+            "count": 10,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 2.926666666666666,
+            "p90AbsoluteErrorUgM3": 4.596666666666666,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "regional_hgb": {
+            "count": 10,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 2.926666666666666,
+            "p90AbsoluteErrorUgM3": 4.596666666666666,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          }
+        },
+        "fixedSpacingCount": 3,
+        "unfinishedTargetsExcluded": 2
+      },
+      "2026-10-05_mean90_210": {
+        "role": "partial diagnostic; never model selection",
+        "models": {
+          "persistence": {
+            "count": 8,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 3.0713541666666657,
+            "p90AbsoluteErrorUgM3": 5.340416666666665,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "basic31_ridge": {
+            "count": 8,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 3.5240928888621683,
+            "p90AbsoluteErrorUgM3": 5.804238951220079,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "regional_ridge": {
+            "count": 8,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 3.5178950330036516,
+            "p90AbsoluteErrorUgM3": 5.08468154813327,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "basic31_hgb": {
+            "count": 8,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 2.794270833333333,
+            "p90AbsoluteErrorUgM3": 4.444583333333329,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          },
+          "regional_hgb": {
+            "count": 8,
+            "issueDays": 1,
+            "targetDays": 1,
+            "maeUgM3": 2.794270833333333,
+            "p90AbsoluteErrorUgM3": 4.444583333333329,
+            "observedChangesAtLeast10UgM3": 0,
+            "correctDirectionCallsAtLeast10UgM3": 0,
+            "falseDropCalls": 0,
+            "falseRiseCalls": 0,
+            "falseChangeCalls": 0
+          }
+        },
+        "fixedSpacingCount": 2,
+        "unfinishedTargetsExcluded": 4
+      }
+    },
+    "interpretation": [
+      "On October 4, regional Ridge gained 0.064188461087315 micrograms per cubic metre at +90 and 0.119682771181269 micrograms per cubic metre on the mean compared with the same basic Ridge learner.",
+      "All four learned candidates made zero correct direction calls reaching 10 micrograms per cubic metre on October 4, against five observed point changes and four observed mean changes.",
+      "No observed changes reached 20 micrograms per cubic metre on the primary test day.",
+      "On partial October 5 outcomes, regional Ridge still improved on its paired basic Ridge but did not beat persistence. The regional-input increment did not reverse; the advantage over persistence did not persist.",
+      "Near-term HGB base and regional outputs were identical because the fixed minimum leaf size of 40 could not support a split with 51 point or 48 mean training rows."
+    ]
+  },
+  "sessionTrial": {
+    "policyVersion": "oct5_session_regional_ablation_v1",
+    "policyFrozenBeforeOutcomePreparation": true,
+    "selectionMode": "none; exploratory paired ablation only",
+    "lookbackDays": 14,
+    "trainingOriginFrequencyMinutes": 60,
+    "trainingIssueOffsetSeconds": 300,
+    "trainingLeadMinutes": [
+      90,
+      180,
+      360,
+      720,
+      1080,
+      1440
+    ],
+    "targetDurationMinutes": 120,
+    "fixedQueries": {
+      "morning": {
+        "issueClock": "07:30",
+        "featureOriginClock": "07:00",
+        "startClock": "09:00",
+        "endClock": "11:00"
+      },
+      "afternoon": {
+        "issueClock": "12:00",
+        "featureOriginClock": "12:00",
+        "startClock": "14:00",
+        "endClock": "16:00"
+      }
+    },
+    "minimumPairedTrainingRows": 120,
+    "minimumCompletedTargetDays": 2,
+    "productionSessionMinimumTrainingRows": 120,
+    "productionSessionMinimumCompletedTargetDays": 10,
+    "settings": {
+      "ridgeAlpha": 100.0,
+      "histGradientBoosting": {
+        "max_iter": 100,
+        "max_depth": 3,
+        "max_leaf_nodes": 7,
+        "min_samples_leaf": 80,
+        "l2_regularization": 50.0,
+        "learning_rate": 0.05,
+        "loss": "absolute_error",
+        "early_stopping": false,
+        "random_state": 1749
+      }
+    },
+    "regionalAddedFeatureCount": 8,
+    "regionalAddedFeatureMeaning": "Modeled local and upwind PM, target modeled PM and issued surface-wind displacement over the longer lead; a coarse uniform-wind proxy rather than a resolved plume trajectory.",
+    "trainingSupport": [
+      {
+        "fitDate": "2026-10-02",
+        "trainingRows": 2,
+        "trainingCompletedTargetDates": 1,
+        "eligibleUnderExploratorySupportThreshold": false
+      },
+      {
+        "fitDate": "2026-10-03",
+        "trainingRows": 93,
+        "trainingCompletedTargetDates": 2,
+        "eligibleUnderExploratorySupportThreshold": false
+      },
+      {
+        "fitDate": "2026-10-04",
+        "trainingRows": 235,
+        "trainingCompletedTargetDates": 3,
+        "eligibleUnderExploratorySupportThreshold": true
+      },
+      {
+        "fitDate": "2026-10-05",
+        "trainingRows": 350,
+        "trainingCompletedTargetDates": 4,
+        "eligibleUnderExploratorySupportThreshold": true
+      }
+    ],
+    "reconstructedQueryAggregates": {
+      "morning": {
+        "persistence": {
+          "count": 2,
+          "issueDays": 2,
+          "targetDays": 2,
+          "maeUgM3": 6.224999999999994,
+          "p90AbsoluteErrorUgM3": 8.95499999999999,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        },
+        "basic31_ridge": {
+          "count": 2,
+          "issueDays": 2,
+          "targetDays": 2,
+          "maeUgM3": 1.4857847328133076,
+          "p90AbsoluteErrorUgM3": 2.5920246147789627,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        },
+        "regional_ridge": {
+          "count": 2,
+          "issueDays": 2,
+          "targetDays": 2,
+          "maeUgM3": 3.1900018650787487,
+          "p90AbsoluteErrorUgM3": 4.12239776971653,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        },
+        "basic31_hgb": {
+          "count": 2,
+          "issueDays": 2,
+          "targetDays": 2,
+          "maeUgM3": 8.364146095716315,
+          "p90AbsoluteErrorUgM3": 8.955622121548892,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        },
+        "regional_hgb": {
+          "count": 2,
+          "issueDays": 2,
+          "targetDays": 2,
+          "maeUgM3": 8.45002793290703,
+          "p90AbsoluteErrorUgM3": 10.173717270455017,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        }
+      },
+      "afternoon": {
+        "persistence": {
+          "count": 1,
+          "issueDays": 1,
+          "targetDays": 1,
+          "maeUgM3": 4.0,
+          "p90AbsoluteErrorUgM3": 4.0,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        },
+        "basic31_ridge": {
+          "count": 1,
+          "issueDays": 1,
+          "targetDays": 1,
+          "maeUgM3": 2.4038117059815747,
+          "p90AbsoluteErrorUgM3": 2.4038117059815747,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        },
+        "regional_ridge": {
+          "count": 1,
+          "issueDays": 1,
+          "targetDays": 1,
+          "maeUgM3": 4.334614491858133,
+          "p90AbsoluteErrorUgM3": 4.334614491858133,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        },
+        "basic31_hgb": {
+          "count": 1,
+          "issueDays": 1,
+          "targetDays": 1,
+          "maeUgM3": 2.8856165761531187,
+          "p90AbsoluteErrorUgM3": 2.8856165761531187,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        },
+        "regional_hgb": {
+          "count": 1,
+          "issueDays": 1,
+          "targetDays": 1,
+          "maeUgM3": 3.9416252740369444,
+          "p90AbsoluteErrorUgM3": 3.9416252740369444,
+          "observedChangesAtLeast10UgM3": 0,
+          "correctDirectionCallsAtLeast10UgM3": 0,
+          "falseDropCalls": 0,
+          "falseRiseCalls": 0,
+          "falseChangeCalls": 0
+        }
+      }
+    },
+    "completedQueryDates": {
+      "morning": [
+        "2026-10-04",
+        "2026-10-05"
+      ],
+      "afternoon": [
+        "2026-10-04"
+      ]
+    },
+    "interpretation": "Regional additions increased MAE for both matched session learners. Only three completed query windows were available and none contained an actual change reaching 10 micrograms per cubic metre."
+  },
+  "actualIssuedSessionAudit": {
+    "source": "Genuinely archived dashboard publications, rather than reconstructed candidates.",
+    "method": "One publication closest before each fixed decision clock, scored on its exact published window with strict completed sensor coverage.",
+    "decisionClocks": {
+      "morning": "07:30",
+      "afternoon": "12:00"
+    },
+    "targetClocks": {
+      "morning": [
+        "09:00",
+        "11:00"
+      ],
+      "afternoon": [
+        "14:00",
+        "16:00"
+      ]
+    },
+    "targetDates": {
+      "morning": [
+        "2026-10-02",
+        "2026-10-03",
+        "2026-10-04",
+        "2026-10-05"
+      ],
+      "afternoon": [
+        "2026-10-02",
+        "2026-10-03",
+        "2026-10-04"
+      ]
+    },
+    "units": {
+      "modelMae": "micrograms per cubic metre",
+      "pairedPersistenceMae": "micrograms per cubic metre"
+    },
+    "summaries": {
+      "morning": {
+        "count": 4,
+        "distinctTargetWindows": 4,
+        "modelMae": 3.71875,
+        "pairedPersistenceMae": 5.768749999999999,
+        "correctDirectionCount": 0,
+        "changedCount": 0,
+        "modelVersions": [
+          "weather_session_change_v1"
+        ]
+      },
+      "afternoon": {
+        "count": 3,
+        "distinctTargetWindows": 3,
+        "modelMae": 6.133333333333333,
+        "pairedPersistenceMae": 5.5666666666666655,
+        "correctDirectionCount": 0,
+        "changedCount": 0,
+        "modelVersions": [
+          "weather_session_change_v1"
+        ]
+      }
+    },
+    "pendingTargetNote": "The October 5 afternoon forecast was already published before this audit, but its target was incomplete and the fixed 12:00 decision clock had not arrived. It is excluded from completed metrics."
+  },
+  "limitations": [
+    "All available study dates are retrospective and previously observable. There is no unobserved or untouched holdout.",
+    "Regional collection began October 1 after 18:13 Malaysia time; only October 2-4 were complete collection days at this morning cutoff.",
+    "Nine model cells form one coarse modeled pollution field, not nine independent monitoring stations.",
+    "Hourly near-term test cases overlap. Fixed 3.5-hour spacing leaves six per head on October 4; neither hourly rows nor pooled session leads are independent storm events.",
+    "Exploratory minimum support of two completed target dates is below the production session requirement of ten. These paired candidates are not exact replays of the full-history production model.",
+    "One complete eligible near-term test day, partial October 5 diagnostics and three completed session query windows cannot establish future event skill.",
+    "The session windows and completed October 5 near-term cases contained no changes reaching the 10-microgram direction threshold. October 4 contained no 20-microgram large events.",
+    "Weather models, source vintages, coarse pollution gradients and uniform-wind transport proxies cannot resolve a local plume, rain onset or thunderstorm outflow; a wind-direction change does not establish the sign of a PM change.",
+    "Regional concentration gradients and transport proxies are not added directly to sensor PM. Doing so would require validation and could double count transport already represented by the regional model."
+  ],
+  "publicationExclusions": "No raw forecasts, sensor rows, feature tables, prediction rows, CSV data, database paths, hostnames, personal identifiers, credentials or machine-local metadata are included."
+}

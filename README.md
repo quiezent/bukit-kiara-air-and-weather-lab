@@ -25,12 +25,23 @@ The dashboard combines local observations with archived Open-Meteo weather forec
 
 1. [I built for a ride that starts 90 minutes from now](docs/journal/2026-09-21-building-for-the-next-three-hours.md)
 2. [I asked other agents—and a separate ChatGPT reviewer—to challenge me](docs/journal/2026-09-21-making-my-models-argue-with-data.md)
+3. [I learned from the forecasts that missed the changes](docs/journal/2026-10-05-learning-from-the-forecast-misses.md)
 
-The journal includes unsuccessful experiments. The latest review produced a **correctness and traceability release**, not a breakthrough in sudden-change prediction. More sophisticated candidates did not earn promotion.
+The journal includes unsuccessful experiments. In the October 5 review, I tested newly collected regional pollution and wind inputs. They did not demonstrate reliable improvement, and I did not promote a new numerical forecast.
+
+## Latest local work, 5 October 2026
+
+I now run the owner's local dashboard as a Windows service, so collection continues independently of my development session. That deployment uses **v19.2.0 / API 1.28.1**. I retain recent-sensor persistence for the +90-minute point and +90–210-minute mean; the owner selected the experimental `weather_session_change_v1` model for Morning and Afternoon.
+
+I added an hourly archive of nine CAMS regional model cells to test incoming pollution alongside wind vectors, rotation and transport. I preserve network retrieval and database availability as separate clocks. These new inputs are diagnostic and do not change the published PM2.5 numbers.
+
+By October 5, I had three complete collection days. The regional near-term candidate's October 4 advantage over persistence did not hold in the following morning's completed cases, while the regional additions increased error in the small session comparison. Sudden-change prediction remains unresolved. The [latest journal entry](docs/journal/2026-10-05-learning-from-the-forecast-misses.md) and [model card](docs/MODEL_CARD.md) give the scores and limits.
+
+**The source bundled here remains the September 21 snapshot, v18.3-public.1 / API 1.24.0.** This documentation update records the newer local work; its code and Windows service setup are not bundled in this publication.
 
 ## Run the public snapshot
 
-Python **3.11** is the tested runtime. From the repository root:
+The bundled September 21 snapshot uses Python **3.11**, the tested runtime. From the repository root:
 
 ```bash
 python -m venv .venv
@@ -59,4 +70,4 @@ python -m unittest discover -s tests -v
 
 The source is published for inspection alongside my writing. No software/content reuse license has been selected for this initial publication; public visibility alone should not be read as an unrestricted reuse grant. Upstream data retains its providers' terms.
 
-**Status, 21 September 2026:** experimental local forecasting; uncalibrated empirical uncertainty spans; no medical or training advice; no official endorsement by any data provider or OpenAI. AI agents help develop and review the software. The running forecast service uses Python statistical models, not an LLM call for each prediction.
+**Documentation status, 5 October 2026; bundled code dated 21 September:** experimental local forecasting; uncalibrated empirical uncertainty spans; no medical or training advice; no official endorsement by any data provider or OpenAI. AI agents help me develop and review the software. The running forecast service uses Python statistical models; it does not call an LLM for each prediction.
