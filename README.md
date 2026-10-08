@@ -12,7 +12,7 @@ The +90-minute concentration helps them judge conditions when they arrive. The f
 
 A forecast that responds after particles have already fallen has not demonstrated advance warning. My [earlier October 8 forecasting chapter](docs/journal/2026-10-08-warning-before-the-ride.md) records the repairs and remaining arrival miss. The published source now includes a separate learned arrival-change distribution for **≥20 and ≥40 falls/rises**. Its implementation does not establish reliable advance warning.
 
-## What the published October 8 source contains
+## What the published forecasting source contains
 
 - Raw TTDI AirGradient PM2.5 concentrations in **µg/m³**, with PM10 and weather context—not an AQI conversion.
 - A direct +90-minute concentration and learned ≥20/≥40 arrival-change probabilities.
@@ -22,7 +22,7 @@ A forecast that responds after particles have already fallen has not demonstrate
 - A background collector, SQLite history and issued-forecast archives independent of open browser tabs.
 - A versioned environmental-evidence API for another application or coach to interpret. My server supplies evidence; it does not prescribe training.
 
-The application source is **v24.0.2-public.1 / API 1.37.0**, under [Apache-2.0](app/LICENSE.md). The [server release guide](docs/SERVER_RELEASE_2026_10_08.md) explains installation, station configuration and cold-history behavior. Afternoon PatchTST's source is included, but its private certified training prefix and freeze assets are excluded; a fresh clone cannot independently reproduce that model. The main arrival and ride learners can train from newly collected eligible history.
+The application source is **v24.0.3-public.1 / API 1.37.0**, under [Apache-2.0](app/LICENSE.md). The [server release guide](docs/SERVER_RELEASE_2026_10_08.md) explains installation, station configuration and cold-history behavior. Afternoon PatchTST's source is included, but its private certified training prefix and freeze assets are excluded; a fresh clone cannot independently reproduce that model. The main arrival and ride learners can train from newly collected eligible history.
 
 The dashboard combines local observations with archived Open-Meteo weather forecasts and experiments using CAMS regional concentrations. They are different kinds of evidence. A weather forecast is not a local rain observation, a distant wind reading is not a smoke trajectory, and a single sensor does not represent every part of the trail.
 
@@ -39,9 +39,15 @@ The forecasting and ESP32 workstreams share maintenance of this project. Each co
 
 The journal includes unsuccessful experiments and forecast misses. October 5's regional inputs did not demonstrate reliable improvement. October 8's fresh-input repair corrected software behavior, but its numerical model still missed the arrival magnitude in a reconstruction of that day's large fall.
 
+## Server/device contract, 9 October 2026
+
+I aligned the device API with the web current-reading and arrival-outcome text. It now carries the native winning arrival probability and within-20 outcome, preserving the issue/reference clocks and every numerical forecast. The device can display the same arrival headline with its percentage. I also corrected an 8 KB server cap that reduced a six-hour history to four graph points: the contract now fits the firmware's 16 KB body and 128-point limits, retaining all observations when they fit and preserving shared PM, temperature and heat-index shapes when sampling is needed.
+
+The [October 9 server update](docs/SERVER_UPDATE_2026_10_09.md) records the contract and **228 passing portable tests**. The live server checks belong to this server contribution; the firmware workstream verifies its own display, speech and board update.
+
 ## Forecast work, 8 October 2026
 
-The local service now uses **v24.0.2 / API 1.37.0**, published here as **v24.0.2-public.1**. I publish literal outputs from a fixed fresh-sequence Ridge model for the +90 point and ride mean/minimum/maximum, and a separate logistic classifier for ≥20/≥40 arrival changes. The first-sampled-crossing HGB output remains in the APIs; the web card focuses on arrival. The publisher does not replace a PM2.5 number with persistence or use a runtime performance selector. Morning and Afternoon retain their separate fixed models, with the Afternoon provisioning limitation documented in the release guide.
+The October 8 service used **v24.0.2 / API 1.37.0**, published then as **v24.0.2-public.1**. I publish literal outputs from a fixed fresh-sequence Ridge model for the +90 point and ride mean/minimum/maximum, and a separate logistic classifier for ≥20/≥40 arrival changes. The first-sampled-crossing HGB output remains in the APIs; the web card focuses on arrival. The publisher does not replace a PM2.5 number with persistence or use a runtime performance selector. Morning and Afternoon retain their separate fixed models, with the Afternoon provisioning limitation documented in the release guide.
 
 I repaired a refresh race that erased observed-movement text and made forecast labels show the probability and its reference clock. I verified numerical agreement across the browser API, Coach API, desk-device API and issued-forecast archive. Those checks establish software consistency. They do not establish advance-warning skill.
 
@@ -102,5 +108,5 @@ Node.js is required for the tests executing the real embedded dashboard JavaScri
 
 Original forecasting application/test source uses [Apache-2.0](app/LICENSE.md). The firmware in [`firmware/esp32-rlcd`](firmware/esp32-rlcd) has its own [Apache-2.0 license](firmware/esp32-rlcd/LICENSE), with separate dependency notices. These code grants do not relicense journal prose, other documentation, photographs or third-party data.
 
-**Source status, 8 October 2026:** limited sudden-change warning evidence and no prospective accuracy claim; no official endorsement by any data provider or OpenAI. AI agents help me develop and review the software. The running forecast service uses Python statistical models; it does not call an LLM for each prediction.
+**Source status, 9 October 2026:** limited sudden-change warning evidence and no prospective accuracy claim; no official endorsement by any data provider or OpenAI. AI agents help me develop and review the software. The running forecast service uses Python statistical models; it does not call an LLM for each prediction.
 

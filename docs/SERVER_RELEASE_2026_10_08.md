@@ -1,5 +1,7 @@
 # Forecasting server source release — 8 October 2026
 
+The current source has the [October 9 device-contract update](SERVER_UPDATE_2026_10_09.md), v24.0.3-public.1. This guide retains the October 8 model/setup scope.
+
 This release publishes the forecasting server and web dashboard at **v24.0.2-public.1**, corresponding to the October 8 local **v24.0.2** deployment. The Coach/environment-evidence API is **1.37.0**. It replaces the earlier September 21 application snapshot with the current application module closure; it does not bundle the operational database or fitted models.
 
 Earlier journal entries describe the work as it stood at their dates. The [earlier preparation review](journal/2026-10-08-warning-before-the-ride.md) and its v23 model-card evidence remain historical records. The source published by this release now includes the separate learned arrival-change distribution described below.

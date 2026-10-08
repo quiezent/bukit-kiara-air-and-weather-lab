@@ -1,8 +1,8 @@
 """Full-window weather coverage contracts; synthetic hourly inputs, no I/O."""
-
 from pathlib import Path as _PublicPath
 import sys as _public_sys
 _public_sys.path.insert(0, str(_PublicPath(__file__).resolve().parents[1] / "app"))
+
 from copy import deepcopy
 import unittest
 
@@ -220,14 +220,14 @@ class RlcdEventQualificationTests(unittest.TestCase):
         rows = [{"epoch": ANCHOR-21600+index*180,
                  "pm02": 10.1 if index % 2 == 0 else 300.1,
                  "atmp": 30.5, "heatindex": 40.5} for index in range(121)]
-        payload["history"] = rlcd_history.build_history(rows, ANCHOR)
-        # The saved full real response exceeds 8KiB. Reserve comparable bytes
-        # for weather/model metadata here without depending on a live file.
+        payload["history"] = rlcd_history.build_history(rows, payload["generated_epoch"])
+        # Reserve metadata bytes to force the actual device's 16 KiB budget,
+        # without depending on a live operational payload.
         size = len(json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8"))
-        payload["dashboard_build"] = "x" * max(0, 8400-size)
+        payload["dashboard_build"] = "x" * max(0, 16600-size)
         before = deepcopy(payload)
-        bounded = rlcd_api.enforce_payload_budget(payload)
-        self.assertLessEqual(len(json.dumps(bounded, ensure_ascii=True, separators=(",", ":")).encode("utf-8")), 8192)
+        bounded = rlcd_api.enforce_payload_budget(payload, history_rows=rows)
+        self.assertLessEqual(len(json.dumps(bounded, ensure_ascii=True, separators=(",", ":")).encode("utf-8")), 16384)
         self.assertLess(len(bounded["history"]["points"]), len(before["history"]["points"]))
         self.assertEqual(bounded["history"]["pm25_summary"], before["history"]["pm25_summary"])
         self.assertEqual(bounded["history"]["gaps"], before["history"]["gaps"])

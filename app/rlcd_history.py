@@ -4,11 +4,13 @@ The caller supplies database rows. This helper performs no I/O and never fills
 missing observations from weather forecasts. Values are rounded only for the
 small graph wire format; sample timestamps always remain actual timestamps.
 """
+from bisect import bisect_left
+import heapq
 import math
 
 WINDOW_S = 6 * 3600
-MAX_POINTS = 96
-BIN_COUNT = (MAX_POINTS - 2) // 2
+MAX_POINTS = 128
+BIN_COUNT = (MAX_POINTS - 2) // 6
 GAP_AFTER_S = 600
 FRESH_S = 420
 SOURCE = "AirGradient TTDI 86311"
@@ -48,12 +50,39 @@ def _number(value, low, high):
     return int(value) if value == int(value) else value
 
 
+def _fill_balanced(points, chosen, maximum):
+    """Fill spare slots with actual rows nearest remaining time midpoints."""
+    epochs = [point[0] for point in points]
+    positions = {stamp: index for index, stamp in enumerate(epochs)}
+    selected = sorted(positions[stamp] for stamp in chosen)
+    intervals = []
+
+    def add_interval(left, right):
+        if right - left > 1:
+            heapq.heappush(intervals, (-(epochs[right] - epochs[left]), left, right))
+
+    for left, right in zip(selected, selected[1:]):
+        add_interval(left, right)
+    while len(chosen) < maximum and intervals:
+        _, left, right = heapq.heappop(intervals)
+        midpoint = (epochs[left] + epochs[right]) / 2
+        index = min(right - 1, bisect_left(epochs, midpoint, left + 1, right))
+        candidates = [index]
+        if index > left + 1:
+            candidates.append(index - 1)
+        index = min(candidates, key=lambda i: (abs(epochs[i] - midpoint), epochs[i]))
+        chosen[epochs[index]] = points[index]
+        add_interval(left, index)
+        add_interval(index, right)
+
+
 def _select(points, start, max_points=MAX_POINTS):
     if isinstance(max_points, bool) or not isinstance(max_points, int) or not 4 <= max_points <= MAX_POINTS:
-        raise ValueError("max_points must be an integer from 4 to 96")
+        raise ValueError("max_points must be an integer from 4 to 128")
     if len(points) <= max_points:
         return points, "actual_rows"
-    bin_count = (max_points - 2) // 2
+    fields = (1, 2, 3) if max_points >= 8 else (1,)
+    bin_count = (max_points - 2) // (2 * len(fields))
     bins = [[] for _ in range(bin_count)]
     for point in points:
         index = min(bin_count - 1,
@@ -63,15 +92,18 @@ def _select(points, start, max_points=MAX_POINTS):
     for bucket in bins:
         if not bucket:
             continue
-        measured = [p for p in bucket if p[1] is not None]
-        if measured:
-            low = min(measured, key=lambda p: (p[1], p[0]))
-            high = max(measured, key=lambda p: (p[1], p[0]))
-        else:
-            low, high = bucket[0], bucket[-1]
-        chosen[low[0]], chosen[high[0]] = low, high
+        for field in fields:
+            measured = [p for p in bucket if p[field] is not None]
+            if measured:
+                low = min(measured, key=lambda p: (p[field], p[0]))
+                high = max(measured, key=lambda p: (p[field], p[0]))
+            else:
+                low, high = bucket[0], bucket[-1]
+            chosen[low[0]], chosen[high[0]] = low, high
+    _fill_balanced(points, chosen, max_points)
+    channels = "pm25_temperature_heat_index" if len(fields) == 3 else "pm25_priority"
     return sorted(chosen.values(), key=lambda p: p[0]), \
-        f"{bin_count}_time_bins_pm25_minmax_plus_endpoints"
+        f"{bin_count}_time_bins_{channels}_minmax_plus_endpoints_balanced_actual_rows"
 
 
 def build_history(rows, now, *, max_points=MAX_POINTS):
@@ -82,9 +114,12 @@ def build_history(rows, now, *, max_points=MAX_POINTS):
     any accepted graph value, not necessarily the latest value of every field.
     The caller must keep each field's nulls when rendering.
 
-    Downsampling retains actual PM min/max rows in 47 equal time bins and the
-    first/last source rows, at most 96 total. Temperature/HI extrema or isolated
-    field-null rows between selected points can be omitted at high density.
+    At most 128 shared actual rows are retained. Dense histories keep min/max
+    rows for PM, temperature and heat index in equal time bins plus the first
+    and last source rows. Spare slots retain additional actual observations
+    spread through time. Tiny budgets of 4-7 rows explicitly prioritize PM;
+    temperature/HI extrema may be omitted there. Isolated field-null rows
+    between selected points can be omitted at high density.
     ``gaps`` records actual collection gaps, before downsampling. Rendering
     must break lines across these intervals, including when no point is kept
     at a gap boundary. Also break across field nulls. Sparse selected point

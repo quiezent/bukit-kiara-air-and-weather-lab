@@ -1,8 +1,8 @@
 """Device contracts for direct numeric model outputs; synthetic inputs only."""
-
 from pathlib import Path as _PublicPath
 import sys as _public_sys
 _public_sys.path.insert(0, str(_PublicPath(__file__).resolve().parents[1] / "app"))
+
 from copy import deepcopy
 import json
 import unittest
@@ -188,7 +188,7 @@ class DirectModelOutputTests(unittest.TestCase):
     def test_direct_model_payload_keeps_weather_proof_history_summary_and_byte_budget(self):
         result, (_, original, _, rows) = self.project()
         self.assertLessEqual(len(json.dumps(result, ensure_ascii=True, allow_nan=False,
-                                           separators=(",", ":")).encode()), 8192)
+                                           separators=(",", ":")).encode()), 16384)
         forecast = result["forecast"]
         for weather in (forecast["ride90_210"]["weather"],
                         forecast["sessions"]["morning"]["weather"], forecast["sessions"]["afternoon"]["weather"]):

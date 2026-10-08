@@ -6,7 +6,7 @@ From the repository root, with the app's runtime dependencies installed:
 python -m unittest discover -s tests -v
 ```
 
-The current 187 tests use generated sensor values, target windows, training
+The current 228 tests use generated sensor values, target windows, training
 records and temporary SQLite databases/model files. They require no operational
 database, saved research snapshot, fitted deployment assets, credentials or network.
 Dashboard imports and its tested pure functions run with storage, network,
@@ -20,13 +20,14 @@ Node.js is required for the integration checks executing the real embedded web
 JavaScript. Some unrelated heavy models and provider calls are mocked to isolate
 publication seams. This is software verification, not forecast-accuracy evidence.
 
-176 checks come from the current 15-module synthetic production suite; 11 retained
+217 checks come from the current 18-module synthetic production suite: 176 from
+the October 8 release plus 41 new display/history/contract checks. The 11 retained
 checks cover clock, scoring and import/issue contracts. September snapshot tests
 requiring the former afternoon fallback/selection and numerical overlay contract
 were replaced by current direct-publication coverage. Their original source and
 the corresponding old application remain in Git history.
 
-An additional isolated cold HTTP smoke of the packaged server verified the HTML,
+The October 8 release's isolated cold HTTP smoke verified the HTML,
 Current, initializing analysis, JSON Schema and Markdown-guide routes against an
 empty database, with provider networking and background workers disabled. That
 check confirms packaging/initialization, not live collector operation or warning skill.

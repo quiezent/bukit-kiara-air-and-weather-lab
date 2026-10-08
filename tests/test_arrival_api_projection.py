@@ -2,10 +2,10 @@
 
 No fits, provider requests, production database access or historical writes.
 """
-
 from pathlib import Path as _PublicPath
 import sys as _public_sys
 _public_sys.path.insert(0, str(_PublicPath(__file__).resolve().parents[1] / "app"))
+
 from copy import deepcopy
 import json
 import math
@@ -41,6 +41,7 @@ def arrival_distribution():
         "arrivalLeadMinutes": 90,
         "target": TARGET,
         "referencePm": 159.87654321098765,
+        "freshReferenceEpoch": ANCHOR - 30,
         "changeThresholdsUgM3": [20, 40],
         "classProbabilities": mass,
         "orderedClassNames": ["fall40", "fall20to40", "within20", "rise20to40", "rise40"],
@@ -71,6 +72,7 @@ def rich_inputs():
     analysis["current"] = deepcopy(reading)
     air = analysis["airWindow"]
     air["arrivalChangeForecast"] = arrival_distribution()
+    air["arrival"]["baselinePoint"] = air["arrivalChangeForecast"]["referencePm"]
     air["firstCrossingEventForecast"]["modelVersion"] = "fresh_sensor_hgb_direct_first20_90min_v2"
     air["trail"]["rideExtrema"] = {
         "available": True, "low": 122.12345678901234, "high": 163.6543210987654,
@@ -116,6 +118,8 @@ class ArrivalDistributionProjectionTests(unittest.TestCase):
         self.assertEqual(actual["arrival_epoch"], original["arrivalEpoch"])
         self.assertEqual(actual["model"], original["modelVersion"])
         self.assertEqual(set(actual), {"available", "fall20", "fall40", "rise20", "rise40",
+                                      "within20", "display_text", "outcome", "outcome_probability",
+                                      "issued_epoch", "fresh_reference_epoch",
                                       "reference_ugm3", "arrival_epoch", "model"})
         self.assert_numeric_heads_unchanged(result, values[1])
 
@@ -207,7 +211,7 @@ class ArrivalDistributionProjectionTests(unittest.TestCase):
         result = self.project(values)
         size = len(json.dumps(result, ensure_ascii=True, allow_nan=False,
                               separators=(",", ":")).encode("utf-8"))
-        self.assertLessEqual(size, 8192)
+        self.assertLessEqual(size, 16384)
         self.assertEqual(encoded(values), original)
         self.assertTrue(result["forecast"]["near90"]["arrival_change"]["available"])
         self.assertTrue(result["forecast"]["near90"]["first20"]["available"])

@@ -9,11 +9,13 @@ from datetime import datetime, timedelta, timezone
 import rlcd_history
 import weather_contracts
 import momentum_display
+import device_display
+from fresh_sensor_features import MAX_FRESH_AGE_SECONDS
 
 SCHEMA_VERSION = 1
 API_PATH = "/api/rlcd/v1"
-MAX_PAYLOAD_BYTES = 8192
-DEVICE_HISTORY_MAX_POINTS = 64
+MAX_PAYLOAD_BYTES = 16384
+DEVICE_HISTORY_MAX_POINTS = rlcd_history.MAX_POINTS
 
 
 def number(value):
@@ -36,25 +38,27 @@ def probability(value):
     return value if value is not None and 0 <= value <= 1 else None
 
 
-def enforce_payload_budget(payload):
-    """Thin only device graph points; keep summaries, gaps and forecasts intact.
+def enforce_payload_budget(payload, *, history_rows):
+    """Fit actual graph observations into the client's 16 KiB body budget.
 
-    Repeated selection is over already issued graph points, so the method
-    explicitly identifies this secondary display-only reduction. Actual PM
-    extrema/endpoints remain observations. HTTP callers can fail closed if
-    fixed prediction fields alone exceed the device's byte limit.
+    Forecasts, full-window summaries and collection gaps stay intact. If
+    reduction is needed, each candidate samples the original observations,
+    never an already thinned graph. The first fitting candidate is published.
     """
-    history = payload.get("history") or {}
-    original_points = list(history.get("points") or ())
-    for maximum in (DEVICE_HISTORY_MAX_POINTS, 56, 48, 40, 32, 24, 16, 8, 4):
-        if len(original_points) > maximum:
-            points, method = rlcd_history._select(original_points, history["start_epoch"], maximum)
-            history["points"] = points
-            history["method"] = "device_secondary_selection_" + method
-        size = len(json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("utf-8"))
-        if size <= MAX_PAYLOAD_BYTES:
+    def size():
+        return len(json.dumps(payload, ensure_ascii=True, allow_nan=False,
+                              separators=(",", ":")).encode("utf-8"))
+    if size() <= MAX_PAYLOAD_BYTES:
+        return payload
+    now = payload["generated_epoch"]
+    maximum = min(DEVICE_HISTORY_MAX_POINTS, len(payload["history"]["points"]))
+    for limit in range(maximum - 1, 3, -1):
+        history = rlcd_history.build_history(history_rows, now, max_points=limit)
+        history["method"] = "device_byte_budget_" + history["method"]
+        payload["history"] = history
+        if size() <= MAX_PAYLOAD_BYTES:
             return payload
-    raise ValueError("RLCD prediction fields exceed the 8192-byte device payload budget")
+    raise ValueError(f"RLCD prediction fields exceed the {MAX_PAYLOAD_BYTES}-byte device payload budget")
 
 
 def weather_point(point):
@@ -181,6 +185,7 @@ def build_payload(reading, analysis, weather, now, *, dashboard_build=None, hist
     """Project already collected inputs, rejecting future/expired clocks."""
     now = int(now)
     reading, analysis, weather = reading or {}, analysis or {}, weather or {}
+    history_rows = tuple(history_rows or ())
     observed = epoch(reading.get("epoch"))
     sensor_age = age(now, observed)
     sensor_ok = sensor_age is not None and sensor_age <= 900
@@ -194,6 +199,7 @@ def build_payload(reading, analysis, weather, now, *, dashboard_build=None, hist
         "temperature_c": number(reading.get("atmp")) if sensor_ok else None,
         "humidity_pct": number(reading.get("rhum")) if sensor_ok else None,
         "heat_index_c": number(reading.get("heatindex")) if sensor_ok else None,
+        "display_text": device_display.current_display_text(reading, analysis, now),
     }
     fetched = epoch(weather.get("fetchedEpoch"))
     weather_age = age(now, fetched)
@@ -273,24 +279,38 @@ def build_payload(reading, analysis, weather, now, *, dashboard_build=None, hist
     arrival_tails = [probability(arrival_change.get(key)) for key in
                      ("probabilityFall20", "probabilityFall40", "probabilityRise20", "probabilityRise40")]
     arrival_center = probability(arrival_change.get("probabilityWithin20"))
-    change_ok = bool(clock_ok and arrival_change.get("available")
-                     and epoch(arrival_change.get("forecastIssuedEpoch")) == issued
-                     and epoch(arrival_change.get("arrivalEpoch")) == issued + 5400
+    arrival_reference = number(arrival_change.get("referencePm"))
+    raw_reference_epoch = number(arrival_change.get("freshReferenceEpoch"))
+    reference_epoch = epoch(raw_reference_epoch)
+    numeric_reference = number(arrival_source.get("baselinePoint"))
+    change_ok = bool(clock_ok and arrival_change.get("available") is True
+                     and number(arrival_change.get("forecastIssuedEpoch")) == issued
+                     and number(arrival_change.get("arrivalEpoch")) == issued + 5400
                      and arrival_change.get("arrivalLeadMinutes") == 90
                      and arrival_change.get("target") == "exact_issue_plus90_arrival_median_proxy_delta_from_fresh5_reference"
-                     and number(arrival_change.get("referencePm")) is not None
+                     and arrival_reference is not None and arrival_reference >= 0
+                     and numeric_reference is not None
+                     and abs(arrival_reference - numeric_reference) <= 1e-7
+                     and reference_epoch is not None and raw_reference_epoch == reference_epoch
+                     and reference_epoch <= issued
+                     and issued - reference_epoch <= MAX_FRESH_AGE_SECONDS
                      and all(value is not None for value in arrival_tails)
                      and arrival_center is not None
                      and arrival_tails[1] <= arrival_tails[0] + 1e-12
                      and arrival_tails[3] <= arrival_tails[2] + 1e-12
                      and abs(arrival_tails[0] + arrival_tails[2] + arrival_center - 1) <= 1e-8)
+    outcome = device_display.arrival_outcome(arrival_change if change_ok else None)
     near["arrival_change"] = {
         "available": change_ok,
         "fall20": arrival_tails[0] if change_ok else None,
         "fall40": arrival_tails[1] if change_ok else None,
         "rise20": arrival_tails[2] if change_ok else None,
         "rise40": arrival_tails[3] if change_ok else None,
-        "reference_ugm3": number(arrival_change.get("referencePm")) if change_ok else None,
+        "within20": arrival_center if change_ok else None,
+        **outcome,
+        "issued_epoch": issued if change_ok else None,
+        "fresh_reference_epoch": reference_epoch if change_ok else None,
+        "reference_ugm3": arrival_reference if change_ok else None,
         "arrival_epoch": epoch(arrival_change.get("arrivalEpoch")) if change_ok else None,
         "model": arrival_change.get("modelVersion"),
     }
@@ -375,4 +395,4 @@ def build_payload(reading, analysis, weather, now, *, dashboard_build=None, hist
                         "rain_and_wind_do_not_guarantee_clearing", "70_is_user_planning_cutoff_not_safety_limit",
                         "windows_are_outlooks_not_sport_recommendations"],
     }
-    return enforce_payload_budget(result)
+    return enforce_payload_budget(result, history_rows=history_rows)

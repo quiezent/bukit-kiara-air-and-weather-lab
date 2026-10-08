@@ -10,6 +10,25 @@ Use `http://127.0.0.1:8765` as the origin when the coaching process runs on the 
 
 The response contract is versioned by `schemaVersion` (currently `1.37.0`). It contains current environmental evidence and aggregated analysis, not sensor-history rows, ride-window selection, or a training prescription.
 
+## RLCD web text and observed history (v24.0.3; October 9, 2026)
+
+Build `2026-10-09-rlcd-web-text-history-v24.0.3` adds presentation fields to `/api/rlcd/v1`, retaining RLCD schema **1** and Coach schema **1.37.0**. Existing numeric forecasts, probability tails and first-crossing fields keep their meanings.
+
+| Field | Meaning |
+|---|---|
+| `current.display_text` | Exact current-card wording: `Latest sensor reading`, or `Observed: ` followed by the recent measured-event label. This describes an observation, not a future forecast. |
+| `forecast.near90.arrival_change.display_text` | `Fall on arrival`, `Rise on arrival`, `No change on arrival`, or `Arrival outcome uncertain` on an exact tie. Null when unavailable. |
+| `outcome` | `fall20`, `rise20`, `within20`, or null when tied/unavailable. |
+| `outcome_probability` | The native, unrounded probability of the uniquely largest of those three disjoint endpoint outcomes. Null on a tie or unavailable forecast. Clients may append its formatted percentage to the headline. |
+| `within20` | The learner's original `probabilityWithin20`; it is not reconstructed from rounded tails. |
+| `issued_epoch`, `fresh_reference_epoch` | Original forecast issue and latest sample used by its trailing five-minute reference. Existing `reference_ugm3` and `arrival_epoch` are retained. |
+
+For example, `No change on arrival` with `outcome_probability=0.921` can be displayed as `No change on arrival 92.1%`. The headline compares the aggregate fall ≥20, rise ≥20 and within-20 probabilities, not the five individual classes or first-crossing probabilities. Exact raw ties have no winning percentage; display `Arrival outcome uncertain`. No probability is normalized, scaled or used to select a PM2.5 point.
+
+Observed-event labels require the measured-through timestamp to be no later than the displayed reading and within 600 seconds of it; the reading's actual server age must be between zero and 720 seconds. Otherwise the text returns to `Latest sensor reading`. Existing sensor numeric availability/freshness gates remain separate. Arrival labels and probabilities share the existing issue/delivery/sensor clock gates, must describe exact issue +90, and require a nonnegative reference matching the numerical head's declared baseline. The fresh-reference sample must precede or equal its original issue and be at most 240 seconds older, matching the learner's input contract. These labels can remain available when the numerical point is unavailable but its reference is retained. Clients still apply the parent forecast's stale/unavailable markers.
+
+The body limit is now **16,384 bytes**, matching the firmware HTTP limit, with at most **128 history points**. A six-hour history with no more than 128 eligible observed rows keeps every row. Denser history selects shared actual rows around PM2.5, temperature and heat-index extrema, retains endpoints and fills remaining slots with time-distributed observations. Byte-pressure selection reads the original rows, never an already thinned graph. The unthinned sample summary and actual collection-gap metadata remain unchanged. Tiny constrained graph budgets below eight points prioritize PM2.5 and can omit other-field extrema. The device window remains six hours.
+
 ## Arrival changes for the preparation decision (1.37.0; October 8, 2026)
 
 Build `2026-10-08-arrival-preparation-models-v24.0.0` adds `exposureOutlook.arrivalChangeForecast`. Its fixed `receipt_visible_logistic_arrival_change20_40_v1` learner predicts the exact issue +90 concentration proxy minus the issue's declared trailing five-minute sensor reference. It does not predict the first crossing anywhere before arrival. `firstCrossingEventForecast` retains its existing target and model identity.
@@ -20,7 +39,7 @@ For a reference of 100 µg/m³, arrival falls of ≥20 and ≥40 mean arrival pr
 
 The arrival classifier uses completed outcomes before Malaysia midnight, aligned five-minute origins and a 120-minute origin embargo, independent of the +210 ride labels. Its fixed multinomial logistic recipe uses C=0.1, training-only median imputation with missing indicators and standard scaling, and 28 scalar sensor/time features. A separate HGB development comparison included 285 columns with 77 strictly confirmed issued-weather fields. The coverage audit found **zero confirmed weather training rows before October 8**, and its weather-augmented and sensor-only predictions were identical. The deployed classifier does not use weather or neighbors. Unknown older sensor receipts remain identified, not reconstructed as known availability.
 
-The web shows every arrival tail. Web update `v24.0.2` removes the “Change before arrival” subsection to focus the preparation decision on conditions at arrival; the first-crossing model, API fields and archived forecasts retain their existing semantics. Small positive probabilities below 0.1% display `<0.1%`, retaining full precision in API/archive data. The compact RLCD schema remains **1** and adds optional `forecast.near90.arrival_change`: `available`, `fall20`, `fall40`, `rise20`, `rise40`, `reference_ugm3`, `arrival_epoch` and `model`. Those probabilities are copied literally. The existing `near90.first20` fields keep their original semantics. Full class, source and input provenance stays in Coach and the issue ledger, rather than consuming the device's 8,192-byte budget.
+The web shows every arrival tail. Web update `v24.0.2` removes the “Change before arrival” subsection to focus the preparation decision on conditions at arrival; the first-crossing model, API fields and archived forecasts retain their existing semantics. Small positive probabilities below 0.1% display `<0.1%`, retaining full precision in API/archive data. The compact RLCD schema remains **1** and adds optional `forecast.near90.arrival_change`: `available`, `fall20`, `fall40`, `rise20`, `rise40`, `reference_ugm3`, `arrival_epoch` and `model`. Those probabilities are copied literally. The existing `near90.first20` fields keep their original semantics. Full class, source and input provenance stays in Coach and the issue ledger, rather than consuming the compact device's byte budget.
 
 Web wording update `v24.0.1` summarizes the largest of the three disjoint arrival probabilities as “Fall on arrival”, “Rise on arrival” or “No change on arrival”. Exact ties say “Arrival outcome uncertain”. “No change” refers to the displayed within-20 outcome, rather than exact zero movement. This changes presentation only; all four tails and every numerical forecast remain direct model outputs.
 
@@ -48,7 +67,7 @@ Current-card observation labels survive independent sensor/history refreshes whi
 
 The current possible texts are `No ≥20 µg/m³ change: [value]%`, `[value] % ≥20 µg/m³ rise`, `[value] % ≥20 µg/m³ fall`, and `Momentum outcomes tied`. The former `No large change expected` headline concealed how close the other outcome probabilities could be. The text describes the highest-probability diagnostic first-crossing outcome within the next 90 minutes from the displayed reference, including unqualified model outcomes. It does not change operational qualification or replace the concentration forecast. Probability display rounds to one decimal and omits a trailing `.0`; the probability fields retain full precision.
 
-`display_text` is `null` when the event is unavailable, malformed, or suppressed by the existing RLCD issue/sensor freshness guards. The web retains its existing clock/reference checks. Device clients should retain stale/unavailable guards, accept an absent field from older servers, and render `≥` as `>=` if their font does not support the glyph. The existing 8192-byte budget still preserves forecast fields and reduces only the device graph sample count when needed.
+`display_text` is `null` when the event is unavailable, malformed, or suppressed by the existing RLCD issue/sensor freshness guards. The web retains its existing clock/reference checks. Device clients should retain stale/unavailable guards, accept an absent field from older servers, and render `≥` as `>=` if their font does not support the glyph. The v24.0.3 budget is 16,384 bytes; it preserves forecast fields and reduces only the device graph sample count when needed.
 
 ## Historical ride minimum–maximum outputs (1.34.0; October 8, 2026)
 

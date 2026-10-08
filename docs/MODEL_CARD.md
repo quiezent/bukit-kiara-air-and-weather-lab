@@ -1,12 +1,12 @@
 # Forecast model card
 
-**Current published source:** v24.0.2-public.1, 8 October 2026. **Coach contract:** 1.37.0.
+**Current published source:** v24.0.3-public.1, 9 October 2026. **Coach contract:** 1.37.0.
 
 The [October 8 source release](SERVER_RELEASE_2026_10_08.md) replaces the September 21 application snapshot. Earlier sections below remain dated research/deployment records; their selectors and fallback behavior do not describe the current publisher. Fitted assets, working data and the private Windows service installation are excluded.
 
 ## Source release and arrival distribution — later on 8 October 2026
 
-The public source corresponds to local v24.0.2. Its fixed Ridge v3 learner publishes the +90 concentration and +90–210 mean/minimum/maximum without numerical selection or persistence substitution. A separately fixed logistic classifier, `receipt_visible_logistic_arrival_change20_40_v1`, predicts a five-class change distribution at exact +90 relative to the issue's trailing five-minute reference. Native class masses supply ≥20/≥40 fall and rise tails and the within-20 outcome. The web focuses on these arrival outcomes; the distinct first-sampled-crossing HGB output remains in the APIs and issue archive.
+The public source corresponds to local v24.0.3. The October 9 update changes device presentation and history sampling; the fixed forecast learners below are unchanged. Its fixed Ridge v3 learner publishes the +90 concentration and +90–210 mean/minimum/maximum without numerical selection or persistence substitution. A separately fixed logistic classifier, `receipt_visible_logistic_arrival_change20_40_v1`, predicts a five-class change distribution at exact +90 relative to the issue's trailing five-minute reference. Native class masses supply ≥20/≥40 fall and rise tails and the within-20 outcome. The web focuses on these arrival outcomes; the distinct first-sampled-crossing HGB output remains in the APIs and issue archive.
 
 The arrival learner uses 28 scalar sensor/time features, completed outcomes before Malaysia midnight, five-minute origins, a 28-day history and a 120-minute origin embargo. Weather and neighboring measurements are not learned inputs to this classifier. The categorical learner and numeric concentration model are separate estimators, not a single jointly fitted trajectory distribution.
 

@@ -4,7 +4,7 @@ This is a curated public snapshot of the reviewed local dashboard, accompanied b
 
 ## Included
 
-- The October 8 **v24.0.2-public.1 / API 1.37.0** forecasting application: 57 top-level Python modules and 27 selected research/runtime helper source files, under [the scoped forecasting Apache-2.0 license](../app/LICENSE.md).
+- The October 9 **v24.0.3-public.1 / API 1.37.0** forecasting application: 58 top-level Python modules and 27 selected research/runtime helper source files, under [the scoped forecasting Apache-2.0 license](../app/LICENSE.md).
 - Sanitized environment/Coach API documentation.
 - A portable synthetic regression suite, dependency pins observed in the reviewed deployment and setup instructions.
 - Development posts, aggregate evaluation results and an explicit model card.
@@ -23,7 +23,7 @@ The working database, collected forecast payloads, raw reviewer packages, privat
 - A user-specific historical collection-gap annotation is removed. Generic gap detection and exclusion of incomplete targets remain.
 - The build has a `-public.1` suffix. These packaging changes do not introduce a new forecast algorithm.
 
-The current public package passed **187 tests**, using synthetic inputs and temporary databases/model files, with no private operational fixture. A separate cold HTTP check verified five packaged routes with an empty database, provider networking and background workers disabled. The original September deployment's 81 Python/16 dashboard checks remain historical evidence; their private fixtures are not bundled. Without the operational database, this repository cannot reproduce the complete historical research. Published aggregate scores are disclosed study results, not a bundled benchmark dataset.
+The current public package passed **228 tests**, using synthetic inputs and temporary databases/model files, with no private operational fixture. The October 8 release's separate cold HTTP check verified five packaged routes with an empty database, provider networking and background workers disabled. The original September deployment's 81 Python/16 dashboard checks remain historical evidence; their private fixtures are not bundled. Without the operational database, this repository cannot reproduce the complete historical research. Published aggregate scores are disclosed study results, not a bundled benchmark dataset.
 
 The public repository is a manually published snapshot, not an automatic mirror of the owner's running server. Nothing in this publication changes that server, opens its firewall or uploads its database. Further posts or releases require a subsequent publishing action.
 
@@ -57,3 +57,7 @@ Original application and associated test source use Apache-2.0. The package pres
 
 The main fresh learners can prepare their own models after sufficient completed history is collected. Afternoon PatchTST's source is included, but its certified historical training prefix, freeze assets and fitted weights are excluded. A source-only clone cannot reproduce that model; compatible local provisioning is required and missing assets leave it unavailable. Frozen historical identities are not weakened or represented as reusable private data. Publishing code and passing implementation checks do not establish useful early-warning accuracy. The [model card](MODEL_CARD.md) gives the inspected and aggregate development limits.
 
+
+## October 9 device contract source update
+
+The source now includes the web-matched current observation and arrival endpoint presentation helper, native winning and within-20 probabilities, stricter reference/clock projection checks, and the corrected 16 KiB/128-point observed-history budget. Numerical learners and first-crossing semantics are unchanged. The [update guide](SERVER_UPDATE_2026_10_09.md) identifies behavior and verification; the [current source manifest](research/2026-10-09-server-source-release.json) records 85 application/helper files and 18 ported synthetic test modules. The older October 8 manifest remains a dated record of that earlier commit, rather than current file hashes. No new raw observations, fitted assets, private device/network identifiers or photographs are included. Firmware publication and board evidence remain the other workstream's responsibility.
