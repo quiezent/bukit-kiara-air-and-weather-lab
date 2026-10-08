@@ -2,7 +2,60 @@
 
 **Public snapshot:** v18.3-public.1, 21 September 2026. **Coach contract:** 1.24.0.
 
-I keep the bundled source and the later local research distinct in this card. The October 5 record describes the owner's newer deployment and studies; the September 21 record below describes the code included in this repository. The newer modules and Windows service installation are not bundled here.
+I keep the bundled source and the later local research distinct in this card. The October 8 and October 5 records describe the owner's newer deployments and studies; the September 21 record below describes the code included in this repository. The newer modules, fitted assets and Windows service installation are not bundled here.
+
+## Local deployment and decision review — 8 October 2026
+
+The checked local service is build `2026-10-08-fresh-sensor-models-v23.0.0`, Coach API **1.36.0**. The owner's primary decision is whether to begin preparing now for a ride starting approximately 90 minutes later. Advance warning of substantial falls and rises, including **20 and 40 µg/m³** changes, is the priority. The +90 concentration supports the arrival judgment; the +90–210 mean and range provide subsequent ride context.
+
+### Fixed outputs and exact targets
+
+| Output | Current local model / target |
+|---|---|
+| +90 concentration | `fresh_sequence_ridge_delta_numeric_v3_20261008`; interpolation of complete 15-minute sensor medians at the exact target clock |
+| +90–210 mean | Same fixed learner; duration-weighted complete 15-minute median proxy over the ride window |
+| Ride minimum and maximum | Same learner's two separate heads; smallest/largest complete 15-minute medians overlapping the ride window, not instantaneous extremes or uncertainty bounds |
+| First ≥20 event before +90 | `fresh_sensor_hgb_direct_first20_90min_v2`; first rise/drop crossing at +15, +30, +45, +60, +75 or +90 relative to the fresh issue reference, or no crossing |
+| Morning / Afternoon | Separate fixed HGB / PatchTST session models; these results do not validate them |
+| Ride-average ≤70 probability | Separate retained classifier; not derived from the numerical ride range |
+
+The numerical Ridge pipeline includes its fitted imputer/scaler and estimator-owned target transform. Native `predict()` returns concentrations. The event HGB's native `predict_proba()` returns the three-class distribution. Publication copies those outputs without a performance selector, persistence substitution, hand-coded rebasing, clipping or range sorting. A missing valid output stays unavailable. The numerical and first-event models use **208 causal sensor/time features**, including a trailing five-minute reference and three hours of sensor sequence. They do not use weather forecasts, neighbors, radar or CAMS inputs.
+
+The freshest single Current reading can differ from the declared five-minute reference. The event target is a first crossing anywhere in the sampled interval, not a change sustained at arrival. It has no learned ≥40 head or crossing-time output. Learned arrival-change probabilities for ≥20/≥40 falls and rises are an identified requirement, not a deployed feature. Ride edge medians can include time outside the exact window; the displayed range is neither a confidence interval nor a guaranteed envelope.
+
+### Development comparisons and adverse results
+
+| Metric and comparison scope | Revised fixed model | Comparator |
+|---|---:|---:|
+| +90 MAE, 522 paired cases on seven dates | 8.6357 µg/m³ | Previous learner 8.1696 |
+| Ride-mean MAE, same cases | 10.9397 µg/m³ | Previous learner 10.6953 |
+| Multiclass event Brier, 1,093 issues on four dates | 0.362521 | Training class-prior baseline 0.291692 |
+| Drop calls, same four-date event cohort, winning class | 8 detected; 58 missed | 64 false drop calls |
+| Event Brier, 558 matched actual October 6 issue clocks | 0.753530 | Original issued model 0.846197 |
+| Drop recall, same October 6 matched issues | 6.60% | Original issued model 30.19% |
+
+Lower MAE and Brier are better. The numeric cohort covers September 27, September 30, October 1, October 3, October 4, October 6 and completed October 8 morning targets. The event cohort covers September 30, October 1, October 3 and October 6. Dense overlapping issues are correlated and are not counts of independent episodes. The original October 6 comparator was actually issued; the revised side is a reconstruction. These comparisons do **not** establish improved overall accuracy or sufficient advance-warning skill. The broader event result is worse than a constant training-prior baseline; the matched October 6 probability-score gain comes with substantially lower drop recall.
+
+The local repair used training completed before October 8 midnight MYT, with a 330-minute numerical training embargo. Input receipts/revisions are bounded by the issue where retained; older missing receipt history remains unknown. Model artifacts fitted after a historical issue are rejected in ordinary serving. Offline counterfactual reconstruction is explicitly identified. Development followed inspection of failures, so the recorded studies are not untouched confirmation tests.
+
+### Completed October 8 arrival cases
+
+| Original issue, MYT | Fresh reference | Original issued +90 | Completed +90 proxy | Revised Ridge reconstruction |
+|---|---:|---:|---:|---:|
+| 16:27:59 | 154.4 | 153.4 | 89.5487 | 152.2757 |
+| 16:29:01 | 156.8 | 153.2 | 89.0113 | 150.7203 |
+
+All values are µg/m³. Arrival is exactly issue +90; the proxy interpolates the complete **17:45 median 96.3** and **18:00 median 88.5**, each supported by five observations. The actual changes were **−64.8513 and −67.7887**. Revised numerical reconstruction errors remained **62.7270 and 61.7090**, demonstrating a remaining magnitude miss even after the fresh-input repair.
+
+HGB first-drop replays were **61.69% and 72.24%**, versus originally issued **19.99% and 21.76%**. The new artifacts were fitted after these issues and this episode informed model design. These figures are development evidence, not originally issued successes. They cannot supply an arrival-level or ≥40 probability. The arrival result alone does not score the later two-hour ride targets.
+
+### Evaluation required for the preparation decision
+
+I need separately learned arrival falls/rises of ≥20 and ≥40 relative to a declared issue reference, while retaining the distinct first-crossing target if it remains useful. Evaluation should preserve real publication times and score warning lead time before onset, misses, false calls, probability quality, arrival errors on large movements and persistence of improvement to arrival. It should report independent episodes/dates and chronological purged comparisons, followed by untouched future issued evidence. A minority fall probability can still matter to the rider even when no crossing is the largest class.
+
+The current service forecasts the TTDI sensor's outcomes. Correspondence with Bukit Kiara trail conditions has not been established with paired trail ground truth. A preparation plan retaining the original reference and absolute arrival clock during rechecks is also a requirement identified in the review; it is not implemented in this update.
+
+The repair passed 105 selected Python tests, 27 observation-renderer JavaScript checks and 11 momentum-renderer checks. Live verification checked literal output agreement across APIs and the immutable issue archive. These checks validate implementation behavior, not atmospheric forecasting skill. The [October 8 journal](journal/2026-10-08-warning-before-the-ride.md) describes the investigation and the riding objective in my developer voice.
 
 ## Local deployment and research — 5 October 2026
 

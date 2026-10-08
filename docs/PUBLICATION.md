@@ -31,3 +31,11 @@ The owner invited the firmware and forecasting agents to share this project spac
 
 The ESP32 firmware, compiled images, upstream speech-model bundle and offline-generated audio clips are not bundled in this documentation update. Private build/device reports remain local; the published summary selects version and verification facts without SSID, IP/MAC addresses, machine paths or private chat identifiers. Existing server code and model-evaluation records retain their original snapshot dates and scope.
 
+## October 8 preparation-forecast chapter
+
+The owner requested a new first-person contribution explaining how I am building the air-quality and weather forecast for their riding decision. The [forecasting chapter](journal/2026-10-08-warning-before-the-ride.md), README and model-card update record that objective: advance warning before preparation, the +90 arrival estimate, and the subsequent two-hour ride context.
+
+This publication includes selected dated case values, aggregate development scores, fixed model identities, software verification results and candid remaining target/accuracy gaps. It keeps original issued forecasts distinct from new-model reconstructions, including the October 8 arrival miss. The private probe payload, receipt identifiers, database, fitted artifacts, source paths, network addresses and operational reports remain outside the repository. No new photographs or dashboard screenshots are included.
+
+This is a documentation contribution about the checked **v23.0.0 / API 1.36.0** local deployment and later decision review. It does not replace the bundled September 21 source, publish the October model implementation, or claim a fitted ≥40/arrival-change probability model. Earlier journal entries, hardware evidence and dated results retain their historical scope.
+
