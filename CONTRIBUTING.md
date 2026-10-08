@@ -10,7 +10,7 @@ For code, run the portable tests, preserve the API's original forecast timestamp
 
 For AI-assisted work, disclose the role of the agent, the evidence it actually checked and the remaining uncertainty. A fresh context can reduce inherited framing, but multiple agents can share blind spots. Debate is useful; measured outcomes decide.
 
-No contribution license or contributor agreement has been selected for this initial public snapshot. Do not submit material you lack permission to share.
+Original contributions to `firmware/esp32-rlcd` use that directory's Apache-2.0 license; preserve its third-party notices. No contribution license or contributor agreement has been selected for the initial server/content snapshot. Do not submit material you lack permission to share.
 
 ## Shared project maintenance
 

@@ -51,7 +51,9 @@ The owner's Waveshare **ESP32-S3-RLCD-4.2** now has a working three-page desk da
 
 This is a shared development space for the forecasting-server and embedded-firmware work. The [new hardware chapter](docs/journal/2026-10-08-building-a-talking-weather-desk.md) includes the owner's device photographs and actual **v24** framebuffers, describes the voice and audio engineering, and records what we tested. A subsequent **v25** readout update speaks the winning momentum outcome's percentage and shortens the rise/drop wording. The latest device/API release provides genuine predicted ride-window extrema at 15-minute resolution and a server-generated momentum label. The older mean-uncertainty span described in the bundled snapshot remains a different quantity.
 
-This addition publishes a development account and selected images/evidence. The runnable server source below remains the September 21 snapshot; the current ESP32 firmware and October server deployment are not bundled here.
+The [ESP32 firmware source and build guide](firmware/esp32-rlcd/README.md) are now published as **v25-public.1**, under **Apache-2.0** for my original firmware and tools. It includes the display, indoor sensors, voice commands, selected-page readouts, Wi-Fi/server discovery, host tests and a clearly marked synthetic API example. Build dependencies are pinned and downloaded separately. Public readback audio is generated with eSpeak NG; the installed device's Microsoft David recordings and Espressif model binaries are not distributed. See the [component licenses and provenance](firmware/esp32-rlcd/THIRD_PARTY_NOTICES.md).
+
+I checked a fresh dependency installation, public-source compilation and host regressions. This public voice variant has not been flashed or acoustically tested on the owner's device; the hardware results in the chapter belong to the earlier installed versions. The server source below remains separately dated until its own publication update.
 
 ## Forecast work, 5 October 2026
 
@@ -92,7 +94,7 @@ python -m unittest discover -s tests -v
 - [Public snapshot and privacy boundary](docs/PUBLICATION.md)
 - [Contribution principles](CONTRIBUTING.md)
 
-The source is published for inspection alongside my writing. No software/content reuse license has been selected for this initial publication; public visibility alone should not be read as an unrestricted reuse grant. Upstream data retains its providers' terms.
+The firmware in [`firmware/esp32-rlcd`](firmware/esp32-rlcd) has its own [Apache-2.0 license](firmware/esp32-rlcd/LICENSE), with separate dependency notices. That scoped grant does not relicense the initial server snapshot, journal, photographs or third-party data. Their applicable terms remain separate; public visibility alone does not grant unrestricted reuse.
 
 **Documentation status, 8 October 2026; bundled code dated 21 September:** experimental local forecasting; uncalibrated empirical uncertainty spans; no medical or training advice; no official endorsement by any data provider or OpenAI. AI agents help me develop and review the software. The running forecast service uses Python statistical models; it does not call an LLM for each prediction.
 

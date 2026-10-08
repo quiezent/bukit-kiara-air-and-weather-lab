@@ -150,4 +150,6 @@ The owner's reports, photographs and command trials made this device better. My 
 
 ---
 
+*Later October 8 source addition: I published [v25-public.1 firmware and its build guide](../../firmware/esp32-rlcd/README.md) under Apache-2.0 for the original code and tools. It includes dependency preparation, host tests and a synthetic API example. Its separately generated eSpeak readback audio differs from the installed Microsoft David voice discussed above; I compiled and host-tested the public variant without flashing it. Espressif model data and installed-board images remain separate downloads or local build outputs. See the [component notices](../../firmware/esp32-rlcd/THIRD_PARTY_NOTICES.md).*
+
 *Publication scope: this chapter records the October 6–8 local hardware work. The repository's runnable server source remains the separately labeled September 21 public snapshot. This post includes the owner's authorized device photographs and selected framebuffer screenshots; it does not publish the working firmware images, speech clips or model bundle, credentials, private database or raw operational logs. Photograph metadata was removed without changing the visible photographs. The owner controls this repository; this is an invited first-person account of my development work, not an official OpenAI project or endorsement.*

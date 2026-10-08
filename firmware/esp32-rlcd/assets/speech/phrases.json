@@ -1,0 +1,490 @@
+{
+  "schema_version": 1,
+  "license": "Apache-2.0",
+  "phrases": [
+    {
+      "id": "N0",
+      "text": "zero"
+    },
+    {
+      "id": "N1",
+      "text": "one"
+    },
+    {
+      "id": "N2",
+      "text": "two"
+    },
+    {
+      "id": "N3",
+      "text": "three"
+    },
+    {
+      "id": "N4",
+      "text": "four"
+    },
+    {
+      "id": "N5",
+      "text": "five"
+    },
+    {
+      "id": "N6",
+      "text": "six"
+    },
+    {
+      "id": "N7",
+      "text": "seven"
+    },
+    {
+      "id": "N8",
+      "text": "eight"
+    },
+    {
+      "id": "N9",
+      "text": "nine"
+    },
+    {
+      "id": "N10",
+      "text": "ten"
+    },
+    {
+      "id": "N11",
+      "text": "eleven"
+    },
+    {
+      "id": "N12",
+      "text": "twelve"
+    },
+    {
+      "id": "N13",
+      "text": "thirteen"
+    },
+    {
+      "id": "N14",
+      "text": "fourteen"
+    },
+    {
+      "id": "N15",
+      "text": "fifteen"
+    },
+    {
+      "id": "N16",
+      "text": "sixteen"
+    },
+    {
+      "id": "N17",
+      "text": "seventeen"
+    },
+    {
+      "id": "N18",
+      "text": "eighteen"
+    },
+    {
+      "id": "N19",
+      "text": "nineteen"
+    },
+    {
+      "id": "N20",
+      "text": "twenty"
+    },
+    {
+      "id": "N30",
+      "text": "thirty"
+    },
+    {
+      "id": "N40",
+      "text": "forty"
+    },
+    {
+      "id": "N50",
+      "text": "fifty"
+    },
+    {
+      "id": "N60",
+      "text": "sixty"
+    },
+    {
+      "id": "N70",
+      "text": "seventy"
+    },
+    {
+      "id": "N80",
+      "text": "eighty"
+    },
+    {
+      "id": "N90",
+      "text": "ninety"
+    },
+    {
+      "id": "Hundred",
+      "text": "hundred"
+    },
+    {
+      "id": "Thousand",
+      "text": "thousand"
+    },
+    {
+      "id": "Minus",
+      "text": "minus"
+    },
+    {
+      "id": "Point",
+      "text": "point"
+    },
+    {
+      "id": "CurrentPM25",
+      "text": "Current outdoor P M two point five"
+    },
+    {
+      "id": "Micrograms",
+      "text": "micrograms per cubic metre"
+    },
+    {
+      "id": "OutdoorTemperature",
+      "text": "Outdoor temperature"
+    },
+    {
+      "id": "DegreesCelsius",
+      "text": "degrees Celsius"
+    },
+    {
+      "id": "Humidity",
+      "text": "Humidity"
+    },
+    {
+      "id": "Percent",
+      "text": "percent"
+    },
+    {
+      "id": "HeatIndex",
+      "text": "Heat index"
+    },
+    {
+      "id": "ForecastWind",
+      "text": "Forecast wind"
+    },
+    {
+      "id": "KilometresPerHour",
+      "text": "kilometres per hour"
+    },
+    {
+      "id": "RainNextHour",
+      "text": "Rain chance for this hour"
+    },
+    {
+      "id": "Unavailable",
+      "text": "Current outdoor readings are unavailable"
+    },
+    {
+      "id": "CurrentDataOld",
+      "text": "Outdoor data is old"
+    },
+    {
+      "id": "ForecastUnavailable",
+      "text": "Weather forecast is unavailable"
+    },
+    {
+      "id": "ForecastOld",
+      "text": "Weather forecast is old"
+    },
+    {
+      "id": "OverviewPage",
+      "text": "Weather overview"
+    },
+    {
+      "id": "RidePage",
+      "text": "Mountain bike ride forecast"
+    },
+    {
+      "id": "HistoryPage",
+      "text": "Outdoor history"
+    },
+    {
+      "id": "IndoorTemperature",
+      "text": "Indoor temperature"
+    },
+    {
+      "id": "IndoorHumidity",
+      "text": "Indoor humidity"
+    },
+    {
+      "id": "OutdoorHumidity",
+      "text": "Outdoor humidity"
+    },
+    {
+      "id": "RainInterval",
+      "text": "Rain forecast from"
+    },
+    {
+      "id": "Until",
+      "text": "to"
+    },
+    {
+      "id": "AM",
+      "text": "A M"
+    },
+    {
+      "id": "PM",
+      "text": "P M"
+    },
+    {
+      "id": "Oh",
+      "text": "oh"
+    },
+    {
+      "id": "Sunday",
+      "text": "Sunday"
+    },
+    {
+      "id": "Monday",
+      "text": "Monday"
+    },
+    {
+      "id": "Tuesday",
+      "text": "Tuesday"
+    },
+    {
+      "id": "Wednesday",
+      "text": "Wednesday"
+    },
+    {
+      "id": "Thursday",
+      "text": "Thursday"
+    },
+    {
+      "id": "Friday",
+      "text": "Friday"
+    },
+    {
+      "id": "Saturday",
+      "text": "Saturday"
+    },
+    {
+      "id": "Near90",
+      "text": "Mountain bike, plus ninety minutes"
+    },
+    {
+      "id": "PMForecast",
+      "text": "P M two point five forecast"
+    },
+    {
+      "id": "FirstRise",
+      "text": "First rise of at least twenty predicted"
+    },
+    {
+      "id": "FirstDrop",
+      "text": "First drop of at least twenty predicted"
+    },
+    {
+      "id": "NoDirectional",
+      "text": "No directional call"
+    },
+    {
+      "id": "TennisMorning",
+      "text": "Tennis morning"
+    },
+    {
+      "id": "Window",
+      "text": "From"
+    },
+    {
+      "id": "RainChance",
+      "text": "Rain chance"
+    },
+    {
+      "id": "FeelsLike",
+      "text": "Feels like"
+    },
+    {
+      "id": "Wind",
+      "text": "Wind"
+    },
+    {
+      "id": "Gust",
+      "text": "Gust"
+    },
+    {
+      "id": "RideWindow",
+      "text": "Ride window, plus ninety to plus two hundred and ten minutes"
+    },
+    {
+      "id": "PMRange",
+      "text": "P M two point five range"
+    },
+    {
+      "id": "ChanceBelow70",
+      "text": "Chance the ride window average is seventy or less"
+    },
+    {
+      "id": "Morning",
+      "text": "Morning"
+    },
+    {
+      "id": "Afternoon",
+      "text": "Afternoon"
+    },
+    {
+      "id": "RainAmount",
+      "text": "Rain amount"
+    },
+    {
+      "id": "Millimetres",
+      "text": "millimetres"
+    },
+    {
+      "id": "HistoryWindow",
+      "text": "History from"
+    },
+    {
+      "id": "LatestPM",
+      "text": "Latest P M two point five"
+    },
+    {
+      "id": "AveragePM",
+      "text": "Average P M two point five"
+    },
+    {
+      "id": "LowestPM",
+      "text": "Lowest P M two point five"
+    },
+    {
+      "id": "HighestPM",
+      "text": "Highest P M two point five"
+    },
+    {
+      "id": "LatestTemperature",
+      "text": "Latest outdoor temperature"
+    },
+    {
+      "id": "LatestHeatIndex",
+      "text": "Latest heat index"
+    },
+    {
+      "id": "BatteryVoltage",
+      "text": "Battery voltage"
+    },
+    {
+      "id": "Volts",
+      "text": "volts"
+    },
+    {
+      "id": "ApproximateBattery",
+      "text": "Approximate battery charge"
+    },
+    {
+      "id": "IndoorTemperatureRange",
+      "text": "Indoor temperature range since restart"
+    },
+    {
+      "id": "IndoorHumidityRange",
+      "text": "Indoor humidity range since restart"
+    },
+    {
+      "id": "UnavailableValue",
+      "text": "unavailable"
+    },
+    {
+      "id": "Old",
+      "text": "Data is old"
+    },
+    {
+      "id": "ForecastIssued",
+      "text": "Forecast issued"
+    },
+    {
+      "id": "Observed",
+      "text": "Observed"
+    },
+    {
+      "id": "FirstChange",
+      "text": "First change prediction"
+    },
+    {
+      "id": "Near90Forecast",
+      "text": "Ninety minute forecast P M two point five"
+    },
+    {
+      "id": "RainInAnHour",
+      "text": "Rain chance in an hour"
+    },
+    {
+      "id": "PMForecastRange",
+      "text": "P M two point five forecast range"
+    },
+    {
+      "id": "ChanceBelow70Is",
+      "text": "Chance the ride window average seventy or less is"
+    },
+    {
+      "id": "Lowest",
+      "text": "lowest"
+    },
+    {
+      "id": "Highest",
+      "text": "highest"
+    },
+    {
+      "id": "Battery",
+      "text": "Battery"
+    },
+    {
+      "id": "PercentCapacity",
+      "text": "percent capacity"
+    },
+    {
+      "id": "TodayMorning",
+      "text": "This morning"
+    },
+    {
+      "id": "TomorrowMorning",
+      "text": "Tomorrow morning"
+    },
+    {
+      "id": "TodayAfternoon",
+      "text": "This afternoon"
+    },
+    {
+      "id": "TomorrowAfternoon",
+      "text": "Tomorrow afternoon"
+    },
+    {
+      "id": "LowerForecastPMThan",
+      "text": "has lower forecast P M two point five than"
+    },
+    {
+      "id": "SimilarPM",
+      "text": "Morning and afternoon P M two point five forecasts are similar"
+    },
+    {
+      "id": "ComparisonUnavailable",
+      "text": "Morning and afternoon comparison unavailable"
+    },
+    {
+      "id": "Warning",
+      "text": "Warning"
+    },
+    {
+      "id": "HighRainChance",
+      "text": "has a high rain chance of"
+    },
+    {
+      "id": "RideRainWarning",
+      "text": "Warning, ride window rain chance"
+    },
+    {
+      "id": "FirstRiseMostLikely",
+      "text": "Rise of twenty or more is most likely"
+    },
+    {
+      "id": "FirstDropMostLikely",
+      "text": "Drop of twenty or more is most likely"
+    },
+    {
+      "id": "No20ChangeMostLikely",
+      "text": "No change of twenty or more is most likely"
+    },
+    {
+      "id": "DemoData",
+      "text": "Demonstration data."
+    }
+  ]
+}

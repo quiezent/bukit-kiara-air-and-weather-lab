@@ -9,6 +9,7 @@ This is a curated public snapshot of the reviewed local dashboard, accompanied b
 - A portable synthetic regression suite, dependency pins observed in the reviewed deployment and setup instructions.
 - Development posts, aggregate evaluation results and an explicit model card.
 - The owner's specifically authorized device photographs and three selected ESP32 framebuffer screenshots in the October 8 hardware chapter, with capture/context captions and photo metadata removed.
+- The later October 8 **v25-public.1** ESP32 firmware source package, tools, synthetic API example, host tests and component notices in [`firmware/esp32-rlcd`](../firmware/esp32-rlcd/README.md), under its scoped Apache-2.0 license.
 
 ## Excluded
 
@@ -29,7 +30,15 @@ The public repository is a manually published snapshot, not an automatic mirror 
 
 The owner invited the firmware and forecasting agents to share this project space and authorized the repository's rename to **Bukit Kiara Air and Weather Lab**. The new journal chapter covers the locally deployed Waveshare ESP32-S3-RLCD-4.2 dashboard. It includes a photograph from display tuning, an October 8 photograph showing the v24 voice controls, three v24 framebuffers, and a curated initial deployment summary. The v25 probability-readout fix and its checks are recorded in the chapter. Those pictures are specifically authorized by the owner; their weather readings are dated captures rather than live data.
 
-The ESP32 firmware, compiled images, upstream speech-model bundle and offline-generated audio clips are not bundled in this documentation update. Private build/device reports remain local; the published summary selects version and verification facts without SSID, IP/MAC addresses, machine paths or private chat identifiers. Existing server code and model-evaluation records retain their original snapshot dates and scope.
+The initial hardware chapter did not bundle firmware source. The later source publication described below adds it. Compiled images, upstream speech-model binaries and the installed device's Microsoft David audio remain excluded. Private build/device reports remain local; the published summary selects version and verification facts without SSID, IP/MAC addresses, machine paths or private chat identifiers. Existing server code and model-evaluation records retain their original snapshot dates and scope.
+
+## October 8 firmware source publication
+
+At the owner's request, I published the reusable display, sensors, weather client, local command recognition and page-readout implementation as **v25-public.1**. This is a source package, with pinned dependency preparation, build and guarded flash tools, Wi-Fi provisioning, host regressions, a speech generator and a synthetic API example. The synthetic example is marked on screen and announced before speech. No credentials, installed-board images or private traces are included.
+
+Original firmware and tools use Apache-2.0. Included driver adaptations retain attribution, and separately installed libraries, fonts, build tools and speech models retain their own terms. Espressif's speech dependency has an Espressif-products restriction; this publication does not claim unrestricted open-source licensing of its weights. Complete notices and license texts are in the firmware package.
+
+The public audio generator uses native eSpeak NG 1.52.0 from original phrases. It preserves the original 120 clip identifiers and adds one demo announcement. Two independent clean generations matched byte for byte. The earlier Microsoft David recordings are excluded. The public source was compiled with a fresh dependency installation and tested on the host, including flash-layout validation; the public eSpeak variant was not flashed or acoustically validated. Existing hardware/audibility results refer to the separately described installed versions. Publication does not change the running server or desk device.
 
 ## October 8 preparation-forecast chapter
 

@@ -1,0 +1,458 @@
+{
+  "schema_version": 1,
+  "demo": true,
+  "site_name": "SYNTHETIC DEMO",
+  "generated_epoch": 1735718400,
+  "timezone": "Asia/Kuala_Lumpur",
+  "refresh_after_s": 60,
+  "dashboard_build": "synthetic-demo-v1",
+  "status": "ok",
+  "current": {
+    "available": true,
+    "fresh": true,
+    "observed_epoch": 1735718355,
+    "age_s": 45,
+    "source": "SYNTHETIC DEMO — not live weather",
+    "pm25_ugm3": 37.0,
+    "temperature_c": 28.0,
+    "humidity_pct": 80.0,
+    "heat_index_c": 32.4
+  },
+  "weather": {
+    "available": true,
+    "fresh": true,
+    "fetched_epoch": 1735718310,
+    "age_s": 90,
+    "source": "SYNTHETIC DEMO — not live weather",
+    "kind": "synthetic_hourly_demo",
+    "rain_kind": "preceding_hour_amount_and_probability_not_exact_onset",
+    "gust_kind": "preceding_hour_maximum",
+    "current_hour": {
+      "valid_epoch": 1735718400,
+      "temperature_c": 27.8,
+      "humidity_pct": 80.0,
+      "feels_like_c": 32.4,
+      "wind_kmh": 7.1,
+      "wind_from_deg": 90.0,
+      "gust_kmh": 13.0,
+      "cloud_pct": 60.0,
+      "rain_start_epoch": 1735714800,
+      "rain_end_epoch": 1735718400,
+      "rain_chance_pct": 10,
+      "rain_mm": 0.2
+    },
+    "next_hours": [
+      {
+        "valid_epoch": 1735722000,
+        "temperature_c": 27.6,
+        "humidity_pct": 80.0,
+        "feels_like_c": 32.199999999999996,
+        "wind_kmh": 7.1,
+        "wind_from_deg": 90.0,
+        "gust_kmh": 13.0,
+        "cloud_pct": 60.0,
+        "rain_start_epoch": 1735718400,
+        "rain_end_epoch": 1735722000,
+        "rain_chance_pct": 18,
+        "rain_mm": 0.2
+      },
+      {
+        "valid_epoch": 1735725600,
+        "temperature_c": 27.400000000000002,
+        "humidity_pct": 80.0,
+        "feels_like_c": 32.0,
+        "wind_kmh": 7.1,
+        "wind_from_deg": 90.0,
+        "gust_kmh": 13.0,
+        "cloud_pct": 60.0,
+        "rain_start_epoch": 1735722000,
+        "rain_end_epoch": 1735725600,
+        "rain_chance_pct": 35,
+        "rain_mm": 0.2
+      },
+      {
+        "valid_epoch": 1735729200,
+        "temperature_c": 27.2,
+        "humidity_pct": 80.0,
+        "feels_like_c": 31.799999999999997,
+        "wind_kmh": 7.1,
+        "wind_from_deg": 90.0,
+        "gust_kmh": 13.0,
+        "cloud_pct": 60.0,
+        "rain_start_epoch": 1735725600,
+        "rain_end_epoch": 1735729200,
+        "rain_chance_pct": 60,
+        "rain_mm": 0.2
+      },
+      {
+        "valid_epoch": 1735732800,
+        "temperature_c": 27.0,
+        "humidity_pct": 80.0,
+        "feels_like_c": 31.599999999999998,
+        "wind_kmh": 7.1,
+        "wind_from_deg": 90.0,
+        "gust_kmh": 13.0,
+        "cloud_pct": 60.0,
+        "rain_start_epoch": 1735729200,
+        "rain_end_epoch": 1735732800,
+        "rain_chance_pct": 70,
+        "rain_mm": 0.2
+      },
+      {
+        "valid_epoch": 1735736400,
+        "temperature_c": 26.8,
+        "humidity_pct": 80.0,
+        "feels_like_c": 31.4,
+        "wind_kmh": 7.1,
+        "wind_from_deg": 90.0,
+        "gust_kmh": 13.0,
+        "cloud_pct": 60.0,
+        "rain_start_epoch": 1735732800,
+        "rain_end_epoch": 1735736400,
+        "rain_chance_pct": 50,
+        "rain_mm": 0.2
+      },
+      {
+        "valid_epoch": 1735740000,
+        "temperature_c": 26.6,
+        "humidity_pct": 80.0,
+        "feels_like_c": 31.2,
+        "wind_kmh": 7.1,
+        "wind_from_deg": 90.0,
+        "gust_kmh": 13.0,
+        "cloud_pct": 60.0,
+        "rain_start_epoch": 1735736400,
+        "rain_end_epoch": 1735740000,
+        "rain_chance_pct": 30,
+        "rain_mm": 0.2
+      }
+    ],
+    "uv_index": null,
+    "uv_available": false
+  },
+  "tennis_morning": {
+    "available": true,
+    "fresh": true,
+    "start_epoch": 1735772400,
+    "end_epoch": 1735779600,
+    "active": false,
+    "summary_epoch": 1735718400,
+    "fetched_epoch": 1735718310,
+    "age_s": 90,
+    "source": "SYNTHETIC DEMO — not live weather",
+    "kind": "synthetic_hourly_weather_only",
+    "rain_chance_max_pct": 12.0,
+    "feels_like_max_c": 30.5,
+    "wind_mean_kmh": 5.0
+  },
+  "history": {
+    "available": true,
+    "fresh": true,
+    "source": "SYNTHETIC DEMO — not live weather",
+    "start_epoch": 1735696755,
+    "end_epoch": 1735718400,
+    "observed_epoch": 1735718355,
+    "age_s": 45,
+    "columns": [
+      "epoch",
+      "pm25_ugm3",
+      "temperature_c",
+      "heat_index_c"
+    ],
+    "units": [
+      "UTC s",
+      "ug/m3",
+      "C",
+      "C"
+    ],
+    "precision_dp": 1,
+    "method": "synthetic_demo_points_no_downsampling",
+    "source_rows": 13,
+    "gap_after_s": 1800,
+    "gap_kind": "source_collection_before_downsampling",
+    "gaps": [],
+    "points": [
+      [
+        1735696755,
+        28.0,
+        25.6,
+        28.6
+      ],
+      [
+        1735698555,
+        30.0,
+        25.8,
+        28.9
+      ],
+      [
+        1735700355,
+        37.0,
+        26.0,
+        29.2
+      ],
+      [
+        1735702155,
+        44.0,
+        26.2,
+        29.5
+      ],
+      [
+        1735703955,
+        48.0,
+        26.4,
+        29.8
+      ],
+      [
+        1735705755,
+        46.0,
+        26.6,
+        30.1
+      ],
+      [
+        1735707555,
+        41.0,
+        26.8,
+        30.4
+      ],
+      [
+        1735709355,
+        39.0,
+        27.0,
+        30.7
+      ],
+      [
+        1735711155,
+        35.0,
+        27.2,
+        31.0
+      ],
+      [
+        1735712955,
+        31.0,
+        27.4,
+        31.3
+      ],
+      [
+        1735714755,
+        29.0,
+        27.6,
+        31.6
+      ],
+      [
+        1735716555,
+        34.0,
+        27.8,
+        31.9
+      ],
+      [
+        1735718355,
+        37.0,
+        28.0,
+        32.4
+      ]
+    ],
+    "pm25_summary": {
+      "available": true,
+      "average_ugm3": 36.8462,
+      "lowest_ugm3": 28.0,
+      "highest_ugm3": 48.0,
+      "sample_count": 13
+    }
+  },
+  "forecast": {
+    "available": true,
+    "fresh": true,
+    "issued_epoch": 1735718340,
+    "age_s": 60,
+    "near90": {
+      "available": true,
+      "pm25_ugm3": 44.2,
+      "reference_pm25_ugm3": 37.0,
+      "role": "experimental_model_output",
+      "model": "synthetic-demo-not-trained",
+      "experimental": true,
+      "validated": false,
+      "qualified": false,
+      "used_for_decision": false,
+      "performance_status": "synthetic_demo_not_trained",
+      "range_low_ugm3": null,
+      "range_high_ugm3": null,
+      "range_kind": "unavailable",
+      "calibrated": false,
+      "target_epoch": 1735723740,
+      "first20": {
+        "available": true,
+        "rise_probability": 0.2,
+        "drop_probability": 0.1,
+        "none_probability": 0.7,
+        "direction": "unresolved",
+        "diagnostic_direction": "unresolved",
+        "display_text": "No large change expected",
+        "qualification": {
+          "state": "unqualified_or_legacy",
+          "operational_use_eligible": false,
+          "actual_cadence_validated": false,
+          "calibration_validated": false
+        },
+        "reference_ugm3": 37.0,
+        "model": "synthetic-demo-not-trained",
+        "experimental": true,
+        "calibrated": false
+      }
+    },
+    "ride90_210": {
+      "available": true,
+      "pm25_ugm3": 41.7,
+      "reference_pm25_ugm3": 37.0,
+      "role": "experimental_model_output",
+      "model": "synthetic-demo-not-trained",
+      "experimental": true,
+      "validated": false,
+      "qualified": false,
+      "used_for_decision": false,
+      "performance_status": "synthetic_demo_not_trained",
+      "range_low_ugm3": null,
+      "range_high_ugm3": null,
+      "range_kind": "unavailable",
+      "calibrated": false,
+      "minimum_maximum": {
+        "available": true,
+        "minimum_ugm3": 31.4,
+        "maximum_ugm3": 53.8,
+        "resolution_minutes": 15,
+        "kind": "predicted_window_minimum_maximum",
+        "model": "synthetic-demo-not-trained"
+      },
+      "start_epoch": 1735723740,
+      "end_epoch": 1735730940,
+      "weather": {
+        "available": true,
+        "fresh": true,
+        "fetched_epoch": 1735718310,
+        "age_s": 90,
+        "source": "SYNTHETIC DEMO — not live weather",
+        "coverage": {
+          "version": "hourly_weather_full_window_coverage_v1",
+          "complete": true,
+          "missing_required_fields": [],
+          "missing_fields": []
+        },
+        "coverage_verified": true,
+        "unavailable_reason": null,
+        "temperature_max_c": 28.0,
+        "feels_like_max_c": 32.0,
+        "humidity_mean_pct": 76.0,
+        "wind_mean_kmh": 7.0,
+        "wind_from_deg": 90.0,
+        "gust_max_kmh": 14.0,
+        "rain_chance_max_pct": 60,
+        "rain_mm": 0.5
+      },
+      "mean_le70": {
+        "available": true,
+        "probability": 0.81,
+        "model": "synthetic-demo-not-trained",
+        "experimental": true,
+        "calibrated": false
+      }
+    },
+    "sessions": {
+      "morning": {
+        "issued_epoch": 1735718340,
+        "start_epoch": 1735779600,
+        "end_epoch": 1735786800,
+        "logistics_epoch": 1735774200,
+        "pm": {
+          "available": true,
+          "pm25_ugm3": 32.6,
+          "reference_pm25_ugm3": 37.0,
+          "role": "experimental_model_output",
+          "model": "synthetic-demo-not-trained",
+          "experimental": true,
+          "validated": false,
+          "qualified": false,
+          "used_for_decision": false,
+          "performance_status": "synthetic_demo_not_trained",
+          "range_low_ugm3": null,
+          "range_high_ugm3": null,
+          "range_kind": "unavailable",
+          "calibrated": false
+        },
+        "weather": {
+          "available": true,
+          "fresh": true,
+          "fetched_epoch": 1735718310,
+          "age_s": 90,
+          "source": "SYNTHETIC DEMO — not live weather",
+          "coverage": {
+            "version": "hourly_weather_full_window_coverage_v1",
+            "complete": true,
+            "missing_required_fields": [],
+            "missing_fields": []
+          },
+          "coverage_verified": true,
+          "unavailable_reason": null,
+          "temperature_max_c": 27.5,
+          "feels_like_max_c": 31.5,
+          "humidity_mean_pct": 76.0,
+          "wind_mean_kmh": 7.0,
+          "wind_from_deg": 90.0,
+          "gust_max_kmh": 14.0,
+          "rain_chance_max_pct": 12,
+          "rain_mm": 0.5
+        }
+      },
+      "afternoon": {
+        "issued_epoch": 1735718340,
+        "start_epoch": 1735797600,
+        "end_epoch": 1735804800,
+        "logistics_epoch": 1735792200,
+        "pm": {
+          "available": true,
+          "pm25_ugm3": 54.1,
+          "reference_pm25_ugm3": 37.0,
+          "role": "experimental_model_output",
+          "model": "synthetic-demo-not-trained",
+          "experimental": true,
+          "validated": false,
+          "qualified": false,
+          "used_for_decision": false,
+          "performance_status": "synthetic_demo_not_trained",
+          "range_low_ugm3": null,
+          "range_high_ugm3": null,
+          "range_kind": "unavailable",
+          "calibrated": false
+        },
+        "weather": {
+          "available": true,
+          "fresh": true,
+          "fetched_epoch": 1735718310,
+          "age_s": 90,
+          "source": "SYNTHETIC DEMO — not live weather",
+          "coverage": {
+            "version": "hourly_weather_full_window_coverage_v1",
+            "complete": true,
+            "missing_required_fields": [],
+            "missing_fields": []
+          },
+          "coverage_verified": true,
+          "unavailable_reason": null,
+          "temperature_max_c": 31.0,
+          "feels_like_max_c": 35.0,
+          "humidity_mean_pct": 76.0,
+          "wind_mean_kmh": 7.0,
+          "wind_from_deg": 90.0,
+          "gust_max_kmh": 14.0,
+          "rain_chance_max_pct": 82,
+          "rain_mm": 0.5
+        }
+      }
+    }
+  },
+  "limitations": [
+    "synthetic_values_not_real_weather_or_sensor_data",
+    "synthetic_demo_not_a_trained_or_validated_model",
+    "example_probabilities_and_concentrations_are_independent",
+    "demo_only_do_not_use_for_ride_or_health_decisions"
+  ]
+}

@@ -1,0 +1,12 @@
+.state/
+build/
+__pycache__/
+*.py[cod]
+.venv/
+WeatherDashboard/SpeechClips.cpp
+WeatherDashboard/flash/
+!WeatherDashboard/partitions.csv
+*.bin
+*.elf
+*.map
+*.wav
