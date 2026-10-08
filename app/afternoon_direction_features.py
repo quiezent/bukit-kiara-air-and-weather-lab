@@ -3,7 +3,6 @@
 No model may read labels outside the completed training slice handed to it.
 Weather and CAMS are forecast vintages, not observations or later reanalysis.
 """
-from bisect import bisect_right
 import math
 import numpy as np
 import pandas as pd
@@ -69,9 +68,8 @@ def base_features(frame):
     return x
 
 def regional(cams,issued,start,end):
-    ix=bisect_right([r[0] for r in cams],issued)-1
-    if ix<0:return np.nan,np.nan,None
-    fetched,run=cams[ix]
+    run,fetched=production._source_at_issue(cams,issued)
+    if run is None:return np.nan,np.nan,fetched
     if issued-fetched>7200 or 'pm2_5' not in run:return np.nan,np.nan,fetched
     grid=run['pm2_5'][0]
     times=np.unique(np.r_[start,grid[(grid>start)&(grid<end)],end])
@@ -81,7 +79,14 @@ def regional(cams,issued,start,end):
     target=vals[0] if start==end else np.trapz(vals,times)/(end-start)
     return float(current),float(target),fetched
 
-def design(frame,rows,cams,weather,cutoff,lead_minutes,duration_minutes,lag_seconds=300,origin_minute=0,extra_origins=None,only_origins=None):
+def design(frame,rows,cams,weather,cutoff,lead_minutes,duration_minutes,lag_seconds=300,origin_minute=0,extra_origins=None,only_origins=None,target_clock=None):
+    """Build as-of features and complete targets for historical issue clocks.
+
+    ``target_clock`` is an optional (start hour, start minute, end hour,
+    end minute) local-time tuple. It keeps a fixed session on each origin's
+    own date; the default retains the existing fixed-lead behaviour used by
+    other candidates.
+    """
     origins=(frame.index[frame.index.minute==origin_minute] if only_origins is None
              else pd.DatetimeIndex(only_origins))
     if extra_origins is not None:origins=origins.union(extra_origins).sort_values()
@@ -90,11 +95,23 @@ def design(frame,rows,cams,weather,cutoff,lead_minutes,duration_minutes,lag_seco
     fresh,stamps,counts=references(rows,epochs,lag_seconds,cutoff)
     x=base_features(frame).reindex(origins)
     x['fresh']=fresh;x['freshOffset']=fresh-x.closedLevel
-    start=issues+lead_minutes*60;end=start+duration_minutes*60
+    if target_clock is None:
+        start=issues+lead_minutes*60;end=start+duration_minutes*60
+    else:
+        start_hour,start_minute,end_hour,end_minute=target_clock
+        if not (0<=start_hour<24 and 0<=end_hour<24 and
+                0<=start_minute<60 and 0<=end_minute<60):
+            raise ValueError('target_clock contains an invalid local time')
+        day=origins.normalize()
+        start=(day+pd.Timedelta(hours=start_hour,minutes=start_minute)).asi8//10**9
+        end=(day+pd.Timedelta(hours=end_hour,minutes=end_minute)).asi8//10**9
+        if np.any(start<=issues) or np.any(end<=start):
+            raise ValueError('fixed target must follow each historical issue')
     middle=pd.to_datetime((start+end)/2,unit='s',utc=True).tz_convert('Asia/Kuala_Lumpur')
     hour=middle.hour+middle.minute/60+middle.second/3600
     x['sinTarget']=np.sin(hour*np.pi/12);x['cosTarget']=np.cos(hour*np.pi/12)
-    x['targetLeadHours']=lead_minutes/60;x['targetDurationHours']=duration_minutes/60
+    x['targetLeadHours']=(start-issues)/3600
+    x['targetDurationHours']=(end-start)/3600
     external=[];audit=[]
     archive=getattr(weather,'rain_archive',weather)
     for issued,a,b in zip(issues,start,end):
@@ -109,11 +126,24 @@ def design(frame,rows,cams,weather,cutoff,lead_minutes,duration_minutes,lag_seco
         assert wf is None or wf<=issued
         audit.append({'camsFetchedEpoch':cf,'weatherFetchedEpoch':wf,'weatherErrors':errors})
     x=x.join(pd.DataFrame(external,index=origins,dtype=float)).reindex(columns=FEATURES)
-    weights=(point_weights(lag_seconds+lead_minutes*60) if not duration_minutes else
-             window_weights(lag_seconds+lead_minutes*60,lag_seconds+(lead_minutes+duration_minutes)*60))
-    parts=pd.concat({n:frame.pm02.shift(-n) for n in weights},axis=1)
-    labels=parts.mul(pd.Series(weights)).sum(axis=1,min_count=len(weights)).reindex(origins).to_numpy(float)
-    complete=epochs+max(weights)*900
+    if target_clock is None:
+        weights=(point_weights(lag_seconds+lead_minutes*60) if not duration_minutes else
+                 window_weights(lag_seconds+lead_minutes*60,lag_seconds+(lead_minutes+duration_minutes)*60))
+        parts=pd.concat({n:frame.pm02.shift(-n) for n in weights},axis=1)
+        labels=parts.mul(pd.Series(weights)).sum(axis=1,min_count=len(weights)).reindex(origins).to_numpy(float)
+        complete=epochs+max(weights)*900
+    else:
+        labels=np.full(len(origins),np.nan)
+        complete=np.empty(len(origins),dtype=np.int64)
+        for i,(anchor,a,b) in enumerate(zip(epochs,start,end)):
+            weights=(point_weights(int(a-anchor)) if a==b else
+                     window_weights(int(a-anchor),int(b-anchor)))
+            bucket_epochs=np.array([anchor+offset*900 for offset in weights],dtype=np.int64)
+            bucket_index=pd.to_datetime(bucket_epochs,unit='s',utc=True).tz_convert('Asia/Kuala_Lumpur')
+            observed=frame.pm02.reindex(bucket_index).to_numpy(float)
+            if np.isfinite(observed).all():
+                labels[i]=float(np.dot(observed,list(weights.values())))
+            complete[i]=int(bucket_epochs[-1])
     labels[complete>cutoff]=np.nan
     return {'x':x,'labels':labels,'issues':issues,'complete':complete,'origins':origins,
             'start':start,'end':end,'stamps':stamps,'counts':counts,'audit':audit,

@@ -23,7 +23,7 @@ import pandas as pd
 
 import window_pm_predictor as support
 
-MODEL_VERSION = "cams_local_residual_change_trial_v2_coverage"
+MODEL_VERSION = "cams_local_residual_change_trial_v3_issue_time"
 MODEL_VARIANT = "residual_ridge"
 RESIDUAL_COMPONENTS = ("constant_residual", "residual_relaxation", "residual_ridge")
 COLS = ("currentResidual", "camsDelta", "camsLevel", "level", "delta30", "delta60",
@@ -38,14 +38,15 @@ _CACHE = OrderedDict()
 _LOCK = threading.RLock()
 
 
-def _regional_features(origins, lead_minutes, runs):
-    """Match the closed sensor median to its centre, not a future model hour."""
+def _regional_features(origins, lead_minutes, runs, live_issue_epoch=None):
+    """Use each past origin's issued run; the live origin uses its actual issue clock."""
     epochs = np.array([r[0] for r in runs], dtype=float)
     records = []
     for origin in origins:
         epoch = int(origin.timestamp())
-        n = int(np.searchsorted(epochs, epoch, side="right")) - 1
-        usable = n >= 0 and epoch - epochs[n] <= MAX_SOURCE_AGE_SECONDS
+        cutoff = int(live_issue_epoch) if live_issue_epoch is not None and origin == origins[-1] else epoch
+        n = int(np.searchsorted(epochs, cutoff, side="right")) - 1
+        usable = n >= 0 and cutoff - epochs[n] <= MAX_SOURCE_AGE_SECONDS
         run = runs[n][1] if usable else None
         centres = epoch + lead_minutes * 60 + np.arange(8) * 900 + 450
         pm = support._sample(run, np.r_[epoch - 450, centres], "pm2_5", max_gap_seconds=10800)
@@ -79,7 +80,8 @@ def _ridge(x, y, q):
     return float(np.clip(estimate, np.min(y), np.max(y)))
 
 
-def replay(frame, lead_minutes, cams_runs, include_live=True, include_diagnostics=True):
+def replay(frame, lead_minutes, cams_runs, include_live=True, include_diagnostics=True,
+           live_issue_epoch=None):
     """Half-hourly prequential replay of six explicitly regional-first variants.
 
     Future windows comprise exactly eight complete 15-minute medians. Missing
@@ -93,7 +95,9 @@ def replay(frame, lead_minutes, cams_runs, include_live=True, include_diagnostic
     origins = features.index[features.index.minute.isin([0, 30])]
     if include_live:
         origins = origins.union(frame.index[-1:]).sort_values()
-    f = features.loc[origins].join(_regional_features(origins, lead_minutes, cams_runs))
+    f = features.loc[origins].join(_regional_features(
+        origins, lead_minutes, cams_runs,
+        live_issue_epoch=live_issue_epoch if include_live and origins[-1] == frame.index[-1] else None))
     f["currentResidual"] = f.level - f.regionalCurrent
     f["camsDelta"] = f.regionalMean - f.regionalCurrent
     f["camsLevel"] = f.regionalCurrent
@@ -192,10 +196,10 @@ def _evidence(records, epoch):
                 "persistenceMae": round(float(np.abs(baseline).mean()), 2),
                 "constantResidualMae": round(float(np.abs(constant).mean()), 2),
                 "rmse": round(float(np.sqrt((error ** 2).mean())), 2),
-                "validationMode": "issued_cams_exact_session_prequential_replay",
+                "validationMode": "origin_clock_cams_exact_session_prequential_replay",
                 "originSpacingMinutes": 30, "independentOrigins": False,
                 "calibrated": False, "prospectivelyValidated": False,
-                "limitation": "Exploratory selection on overlapping historical outcomes; tested alternatives were worse than the existing primary model overall. Not prospective validation."}
+                "limitation": "Historical replay selects CAMS at each closed sensor origin; the live trial selects it at actual issue time. Exploratory overlapping outcomes did not show superiority to the primary model. Not prospectively validated."}
     return evidence, np.quantile(error, [.1, .9])
 
 
@@ -216,7 +220,9 @@ def predict_windows(db_path, rows, windows, issue_epoch):
         return {key: unavailable("stale_or_missing_closed_sensor_bucket") for key in windows}
     digest = hashlib.blake2b(pd.util.hash_pandas_object(frame, index=True).values.tobytes(), digest_size=12).hexdigest()
     window_key = tuple((k, w.get("startEpoch"), w.get("endEpoch")) for k, w in sorted(windows.items()))
-    revision = _archive_revision(db_path, origin_epoch)
+    # A run fetched after the last closed sensor bucket but before this request
+    # was genuinely available at issue time. It must invalidate the cache.
+    revision = _archive_revision(db_path, issue_epoch)
     key = (str(db_path), MODEL_VERSION, MODEL_VARIANT, digest, window_key, revision)
     with _LOCK:
         # A later live call can share this closed frame and target with an
@@ -232,7 +238,7 @@ def predict_windows(db_path, rows, windows, issue_epoch):
             for value in result.values():
                 value["computeSeconds"] = round(time.perf_counter() - clock, 3)
             return result
-        runs = support._read_runs(db_path, "air_quality_forecast_runs", origin_epoch)
+        runs = support._read_runs(db_path, "air_quality_forecast_runs", issue_epoch)
         result = {}
         for name, window in windows.items():
             start, end = window.get("startEpoch"), window.get("endEpoch")
@@ -243,11 +249,13 @@ def predict_windows(db_path, rows, windows, issue_epoch):
             if not 90 <= lead <= support.MAX_LEAD_MINUTES:
                 result[name] = unavailable("outside_90_min_to_24_hour_model_horizon")
                 continue
-            current_regional = _regional_features(frame.index[-1:], int(lead), runs).iloc[0]
+            current_regional = _regional_features(
+                frame.index[-1:], int(lead), runs, live_issue_epoch=issue_epoch).iloc[0]
             if not np.isfinite(current_regional.regionalMean):
                 result[name] = unavailable("missing_stale_or_incomplete_issued_cams_forecast")
                 continue
-            records = replay(frame, int(lead), runs, include_diagnostics=False)
+            records = replay(frame, int(lead), runs, include_diagnostics=False,
+                             live_issue_epoch=issue_epoch)
             if not records or records[-1]["originEpoch"] != origin_epoch:
                 result[name] = unavailable("missing_regional_sensor_overlap")
                 continue

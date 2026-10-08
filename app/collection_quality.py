@@ -27,7 +27,6 @@ def collection_summary(rows, as_of_epoch, gap_seconds=600):
     gaps = [{"startEpoch": left, "endEpoch": right, "durationMinutes": round((right-left)/60, 2),
              "cause": "not_determined", "imputed": False}
             for left, right in zip(epochs, epochs[1:]) if right-left > gap_seconds]
-    # Gaps are measured; the public snapshot does not infer their cause.
     return {"gapThresholdSeconds": gap_seconds, "gapCount": len(gaps),
             "recentGaps": gaps[-10:], "latestObservationEpoch": epochs[-1] if epochs else None,
             "latestObservationAgeSeconds": as_of_epoch-epochs[-1] if epochs else None,

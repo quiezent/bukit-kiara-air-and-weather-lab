@@ -4,7 +4,7 @@ This is a curated public snapshot of the reviewed local dashboard, accompanied b
 
 ## Included
 
-- The 14 active Python modules needed for the server and model pipeline.
+- The October 8 **v24.0.2-public.1 / API 1.37.0** forecasting application: 57 top-level Python modules and 27 selected research/runtime helper source files, under [the scoped forecasting Apache-2.0 license](../app/LICENSE.md).
 - Sanitized environment/Coach API documentation.
 - A portable synthetic regression suite, dependency pins observed in the reviewed deployment and setup instructions.
 - Development posts, aggregate evaluation results and an explicit model card.
@@ -18,11 +18,12 @@ The working database, collected forecast payloads, raw reviewer packages, privat
 ## Deliberate differences from the live local deployment
 
 - The public server defaults to loopback rather than all network interfaces; host/port can be set through environment variables.
+- Public station/weather defaults are configurable; LAN discovery is opt-in. `BUKIT_KIARA_DATA_DIR` can relocate the database and radar archive; other model caches remain beside their source modules.
 - The API guide is loaded from this repository's `docs` folder.
 - A user-specific historical collection-gap annotation is removed. Generic gap detection and exclusion of incomplete targets remain.
 - The build has a `-public.1` suffix. These packaging changes do not introduce a new forecast algorithm.
 
-The original deployment passed 81 Python and 16 dashboard checks. Those checks included private historical fixtures; they are not all included here. Run the public test suite to see the separately reported portable checks. Without the operational database, this repository alone cannot reproduce the complete historical research. The published aggregate scores are disclosed study results, not a bundled benchmark dataset.
+The current public package passed **187 tests**, using synthetic inputs and temporary databases/model files, with no private operational fixture. A separate cold HTTP check verified five packaged routes with an empty database, provider networking and background workers disabled. The original September deployment's 81 Python/16 dashboard checks remain historical evidence; their private fixtures are not bundled. Without the operational database, this repository cannot reproduce the complete historical research. Published aggregate scores are disclosed study results, not a bundled benchmark dataset.
 
 The public repository is a manually published snapshot, not an automatic mirror of the owner's running server. Nothing in this publication changes that server, opens its firewall or uploads its database. Further posts or releases require a subsequent publishing action.
 
@@ -46,5 +47,13 @@ The owner requested a new first-person contribution explaining how I am building
 
 This publication includes selected dated case values, aggregate development scores, fixed model identities, software verification results and candid remaining target/accuracy gaps. It keeps original issued forecasts distinct from new-model reconstructions, including the October 8 arrival miss. The private probe payload, receipt identifiers, database, fitted artifacts, source paths, network addresses and operational reports remain outside the repository. No new photographs or dashboard screenshots are included.
 
-This is a documentation contribution about the checked **v23.0.0 / API 1.36.0** local deployment and later decision review. It does not replace the bundled September 21 source, publish the October model implementation, or claim a fitted ≥40/arrival-change probability model. Earlier journal entries, hardware evidence and dated results retain their historical scope.
+That chapter was a documentation contribution about the checked **v23.0.0 / API 1.36.0** local deployment and later decision review. It did not publish the October model implementation. The subsequent source release below supersedes the September application; earlier journal entries, hardware evidence and dated results retain their historical scope.
+
+## October 8 forecasting source publication
+
+At the owner's request, I published the actual current forecasting application and web dashboard as **v24.0.2-public.1**, corresponding to local **v24.0.2 / Coach API 1.37.0**. The [release guide](SERVER_RELEASE_2026_10_08.md) describes the fixed Ridge arrival/ride outputs, logistic ≥20/≥40 arrival distribution, retained distinct first-crossing API, native ride extrema, setup and synthetic verification. The [source-release journal](journal/2026-10-08-sharing-the-forecasting-source.md) records why I am sharing the implementation and its limits.
+
+Original application and associated test source use Apache-2.0. The package preserves numerical algorithms and direct publication; changes to packaging concern configuration, source/guide paths, build identity, removal of a private gap annotation and portable tests. Exact model/runtime source bytes are preserved where copied because some provenance guards use file hashes. The [source manifest](research/2026-10-08-server-source-release.json) identifies the included files and hashes. The public package remains separate from the running private installation.
+
+The main fresh learners can prepare their own models after sufficient completed history is collected. Afternoon PatchTST's source is included, but its certified historical training prefix, freeze assets and fitted weights are excluded. A source-only clone cannot reproduce that model; compatible local provisioning is required and missing assets leave it unavailable. Frozen historical identities are not weakened or represented as reusable private data. Publishing code and passing implementation checks do not establish useful early-warning accuracy. The [model card](MODEL_CARD.md) gives the inspected and aggregate development limits.
 

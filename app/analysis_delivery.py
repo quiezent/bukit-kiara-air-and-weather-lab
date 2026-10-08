@@ -9,6 +9,33 @@ import threading
 import time
 
 
+_UNSET = object()
+
+
+class CoalescingDiagnosticQueue:
+    """Keep at most one waiting diagnostic snapshot behind the active fit."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        self.pending = None
+
+    def submit(self, job):
+        with self.lock:
+            displaced = self.pending
+            self.pending = job
+            self.wake.set()
+            return displaced
+
+    def take(self, timeout=None):
+        self.wake.wait(timeout)
+        with self.lock:
+            job = self.pending
+            self.pending = None
+            self.wake.clear()
+            return job
+
+
 class AnalysisDelivery:
     def __init__(self, refresh_seconds=60, maximum_age_seconds=600,
                  retry_seconds=30, max_keys=4, clock=time.time):
@@ -68,7 +95,7 @@ class AnalysisDelivery:
             self.entries[key]["error"] = None
             return key
 
-    def publish_primary(self, key, result):
+    def publish_primary(self, key, result, *, diagnostics="pending"):
         # Copy before taking the coordination lock: publication is atomic and
         # readers never share mutable dictionaries with enrichment code.
         saved = copy.deepcopy(result)
@@ -76,26 +103,37 @@ class AnalysisDelivery:
             if self.active_key != key:
                 raise RuntimeError("Only the active producer can publish")
             entry = self.entries[key]
-            entry.update(result=saved, error=None, diagnostics="pending")
-            self.phase = "diagnostics"
+            entry.update(result=saved, error=None,
+                         diagnostics=diagnostics if saved.get("available") else "complete")
+            self.phase = "diagnostics" if diagnostics == "pending" else None
 
-    def publish_diagnostics(self, key, result):
+    def publish_diagnostics(self, key, result, *, stale_ok=False):
         saved = copy.deepcopy(result)
         with self.lock:
-            if self.active_key != key:
+            if not stale_ok and self.active_key != key:
                 raise RuntimeError("Only the active producer can enrich")
-            entry = self.entries[key]
+            entry = self.entries.get(key)
+            if entry is None:
+                if stale_ok:
+                    return False
+                raise RuntimeError("Diagnostic entry was evicted")
             if (entry["result"] or {}).get("forecastIssuedEpoch") != saved.get("forecastIssuedEpoch"):
+                if stale_ok:
+                    return False
                 raise ValueError("Diagnostics cannot relabel a forecast issue")
             entry["result"] = saved
             entry["diagnostics"] = "complete"
+            return True
 
-    def fail(self, key, error, diagnostics=False):
+    def fail(self, key, error, diagnostics=False, *, expected_issue_epoch=_UNSET):
         with self.lock:
             entry = self.entries.get(key)
             if entry is None:
                 return
             if diagnostics:
+                if (expected_issue_epoch is not _UNSET
+                        and (entry["result"] or {}).get("forecastIssuedEpoch") != expected_issue_epoch):
+                    return
                 entry["diagnostics"] = "error"
             else:
                 entry["error"] = str(error)

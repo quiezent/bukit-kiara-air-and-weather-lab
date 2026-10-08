@@ -9,6 +9,14 @@
 *.parquet
 *.pkl
 *.pickle
+*.jsonl
+*.pt
+*.pth
+*.npz
+*.npy
+*.safetensors
+*.joblib
+*.ckpt
 *.gz
 *.csv
 *.tsv
@@ -23,5 +31,9 @@ venv/
 .mypy_cache/
 backups/
 private/
+app/research/**/cache/
+app/research/**/daily_cache/
+app/research/**/models/*.json
+app/research/**/data/*.json
 .DS_Store
 Thumbs.db

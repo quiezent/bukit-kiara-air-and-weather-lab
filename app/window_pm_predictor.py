@@ -20,10 +20,20 @@ import pandas as pd
 from collection_quality import bucket_coverage
 from forecast_freshness import refresh_session_records, raw_arrays, VERSION as FRESHNESS_VERSION, REFERENCE_WINDOW_SECONDS
 import rain_weather_features as rain_features
+import observation_provenance
 
-MODEL_VERSION="local_session_adaptive_v5_fresh_component_scoring"
+# The adaptive estimator is unchanged from v5. This version publishes its
+# experimental point by explicit user choice and retains a separate archive.
+CANDIDATE_MODEL_VERSION="local_session_adaptive_v5_fresh_component_scoring"
+MODEL_VERSION="local_session_experimental_selected_v7"
 RAIN_MODEL_VERSION="local_session_adaptive_v5_rain_fresh_component_scoring_experimental"
 WEIGHT_POLICY_VERSION="fresh_component_mae_completed_only_v1"
+SELECTION_POLICY_VERSION="user_selected_experimental_session_v1"
+MIN_MATCHED_ISSUES=14
+MIN_MATCHED_DAYS=14
+MIN_ABSOLUTE_MAE_GAIN=2.0
+MIN_RELATIVE_MAE_GAIN=.10
+ISSUE_LAG_TOLERANCE_SECONDS=60
 BUCKET_SECONDS=900
 MAX_LEAD_MINUTES=1440
 COMPONENTS=("persistence","half_ridge_local","half_ridge_weather","half_cams","mean_revert")
@@ -45,27 +55,38 @@ _RUN_CACHE=OrderedDict()
 _RUN_LOCK=threading.RLock()
 
 
-class WeatherRuns(list):
+class SourceRuns(list):
+    def __init__(self,iterable=()):
+        super().__init__(iterable)
+        self.receipt_provenance=[]
+
+
+class WeatherRuns(SourceRuns):
     """Keep the legacy list-of-(fetched,arrays) API used by CAMS companions."""
     rain_archive=None
 
 
-def _raw_runs(db_path,table,issue_epoch):
+def _raw_runs(db_path,table,issue_epoch,*,strict_receipts=False):
     """Read and hash actual issued payloads, including same-count corrections."""
     if table not in ("air_quality_forecast_runs","weather_forecast_runs"):
         raise ValueError("unsupported archive table")
     with closing(sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=20)) as conn:
-        version_filter=" AND model_version IN ('cams_anchor_v1','cams_anchor_v2')" if table=="air_quality_forecast_runs" else ""
-        raw=conn.execute(f"SELECT fetched_epoch,payload,source FROM {table} WHERE fetched_epoch<=?{version_filter} ORDER BY fetched_epoch,payload",(issue_epoch,)).fetchall()
+        raw=observation_provenance.compatible_source_runs(conn,table,issue_epoch,
+            strict=strict_receipts,include_revisions=True)
     digest=hashlib.blake2b(digest_size=16)
-    rows=[]
-    for fetched,payload,source in raw:
+    rows=SourceRuns()
+    for record in raw:
+        fetched,payload,source=record['fetched_epoch'],record['payload'],record['source']
+        provenance=record['_provenance']
         digest.update(repr(fetched).encode("ascii"));digest.update(b"\0")
         digest.update(payload.encode("utf-8"));digest.update(b"\0")
         digest.update(str(source).encode("utf-8"));digest.update(b"\0")
+        digest.update(json.dumps(provenance,sort_keys=True,separators=(',',':')).encode('utf-8'))
         # Keep source corrections in the revision hash, even when rejected.
-        if table=="air_quality_forecast_runs" and source!="Open-Meteo / CAMS Global":continue
+        if table=="air_quality_forecast_runs" and (source!="Open-Meteo / CAMS Global"
+                or record['model_version'] not in ('cams_anchor_v1','cams_anchor_v2')):continue
         rows.append((fetched,payload))
+        rows.receipt_provenance.append(provenance)
     return rows,digest.hexdigest()
 
 
@@ -95,20 +116,20 @@ def _frame(rows,issue_epoch):
     return f
 
 
-def _read_runs(db_path,table,issue_epoch,*,raw_snapshot=None):
-    result=WeatherRuns() if table=="weather_forecast_runs" else []
+def _read_runs(db_path,table,issue_epoch,*,raw_snapshot=None,strict_receipts=False):
+    result=WeatherRuns() if table=="weather_forecast_runs" else SourceRuns()
     # Read-only SQLite connection: this module never changes the telemetry DB.
     # A caller may reuse the exact rows and content hash already read for this
     # table/cutoff. Standalone callers still reread bytes to detect corrections.
-    rows,revision=_raw_runs(db_path,table,issue_epoch) if raw_snapshot is None else raw_snapshot
+    rows,revision=_raw_runs(db_path,table,issue_epoch,strict_receipts=strict_receipts) if raw_snapshot is None else raw_snapshot
     # The payload set can be unchanged across adjacent issue times, but the
     # attached rain archive must retain this call's exact availability cutoff.
-    cache_key=(str(db_path),table,revision,float(issue_epoch)) if table=="weather_forecast_runs" else (str(db_path),table,revision)
+    cache_key=(str(db_path),table,revision,float(issue_epoch),strict_receipts) if table=="weather_forecast_runs" else (str(db_path),table,revision,strict_receipts)
     with _RUN_LOCK:
         if cache_key in _RUN_CACHE:
             _RUN_CACHE.move_to_end(cache_key)
             return _RUN_CACHE[cache_key]
-        for fetched,payload in rows:
+        for position,(fetched,payload) in enumerate(rows):
             try:
                 data=json.loads(payload)
                 source=str(data.get("source", ""))
@@ -139,9 +160,12 @@ def _read_runs(db_path,table,issue_epoch,*,raw_snapshot=None):
                     values["windV925"]=-speed*np.cos(np.deg2rad(direction))
                 arrays={c:(epochs[np.isfinite(v)],v[np.isfinite(v)]) for c,v in values.items() if np.isfinite(v).any()}
                 result.append((float(fetched),arrays))
+                provenance=getattr(rows,'receipt_provenance',[])
+                result.receipt_provenance.append(provenance[position] if position<len(provenance) else
+                    {'receiptKnown':False,'availableEpoch':None,'receiptPolicy':'legacy_receipt_unknown'})
             except (ValueError,TypeError,KeyError,OverflowError):continue
         if table=="weather_forecast_runs":
-            result.rain_archive=rain_features.load_runs(db_path,issue_epoch)
+            result.rain_archive=rain_features.load_runs(db_path,issue_epoch,strict_receipts=strict_receipts)
         _RUN_CACHE[cache_key]=result
         while len(_RUN_CACHE)>6:_RUN_CACHE.popitem(last=False)
     return result
@@ -179,17 +203,30 @@ def _validated_weather_arrays(archive,issued):
     return arrays,selected.fetched_epoch
 
 
+def _source_at_issue(runs,issued,epochs=None):
+    """Reselect a stored receipt vintage at EACH historical training origin."""
+    if epochs is None:epochs=[r[0] for r in runs]
+    position=int(np.searchsorted(epochs,issued,side='right'))-1
+    provenance=getattr(runs,'receipt_provenance',[])
+    while position>=0:
+        fetched,arrays=runs[position]
+        evidence=provenance[position] if position<len(provenance) else {}
+        available=evidence.get('availableEpoch')
+        if evidence.get('receiptKnown') is True and (available is None or available>issued):
+            position-=1
+            continue
+        return (arrays,fetched) if issued-fetched<=2*3600 else (None,None)
+    return None,None
+
+
 def _archive_features(origins,lead_minutes,cams_runs,weather_runs,issue_lag_seconds=0,use_shared_source=False):
     records=[]
     ce=np.array([r[0] for r in cams_runs]);we=np.array([r[0] for r in weather_runs])
     for origin in origins:
         epoch=int(origin.timestamp())
         issued=epoch+float(issue_lag_seconds)
-        ci=int(np.searchsorted(ce,issued,side="right"))-1
-        wi=int(np.searchsorted(we,issued,side="right"))-1
-        cams=cams_runs[ci][1] if ci>=0 and issued-ce[ci]<=2*3600 else None
-        weather=weather_runs[wi][1] if wi>=0 and issued-we[wi]<=2*3600 else None
-        weather_fetched=int(we[wi]) if weather is not None else None
+        cams,cams_fetched=_source_at_issue(cams_runs,issued,ce)
+        weather,weather_fetched=_source_at_issue(weather_runs,issued,we)
         if use_shared_source:
             weather,weather_fetched=_validated_weather_arrays(weather_runs.rain_archive,issued)
         centres=epoch+lead_minutes*60+np.arange(8)*900+450
@@ -202,7 +239,7 @@ def _archive_features(origins,lead_minutes,cams_runs,weather_runs,issue_lag_seco
         records.append({"camsDelta":mean(pm[1:])-pm[0],"camsLevel":pm[0],
                         "windU":mean(wind_u),"windV":mean(wind_v),
                         "weatherTempDelta":mean(temp[1:])-temp[0],"weatherRain":mean(rain),
-                        "camsFetchedEpoch":int(ce[ci]) if cams is not None else None,
+                        "camsFetchedEpoch":int(cams_fetched) if cams is not None else None,
                         "weatherFetchedEpoch":weather_fetched})
     return pd.DataFrame(records,index=origins)
 
@@ -400,33 +437,129 @@ def _fresh_weighted_records(records,rows,lag_seconds,issue_epoch,training_cutoff
     return refreshed
 
 
-def _evidence(records,epoch):
-    scored=[r for r in records if r["actual"] is not None and r["targetEndEpoch"]<epoch]
-    if not scored:return {"count":0,"distinctDays":0,"calibrated":False},None
-    error=np.array([r["actual"]-r["prediction"] for r in scored])
-    base=np.array([r["actual"]-r["persistence"] for r in scored])
-    dates={pd.Timestamp(r["originEpoch"],unit="s",tz="UTC").tz_convert("Asia/Kuala_Lumpur").date() for r in scored}
-    evidence={"count":len(scored),"distinctDays":len(dates),"mae":round(float(np.abs(error).mean()),2),
-              "persistenceMae":round(float(np.abs(base).mean()),2),"rmse":round(float(np.sqrt((error**2).mean())),2),
-              "closedMainReferenceMae":round(float(np.mean([abs(r["actual"]-r.get("closedPrediction",r["prediction"])) for r in scored])),2),
-              "freshnessAppliedCount":sum(bool(r.get("freshnessApplied")) for r in scored),
-              "persistenceRole":"same_issue_five_minute_reference_with_closed_anchor_fallback",
-              "validationMode":"exact_target_same_issue_lag_fresh_reference_replay","originSpacingMinutes":30,
-              "independentOrigins":False,"calibrated":False,"prospectivelyValidated":False,
-              "limitation":"Experimental reactive reference policy; mixed retrospective day and tail-error results. Overlapping historical outcomes are not independent or proof of future accuracy."}
-    recent=[r for r in scored if r["targetEndEpoch"]>=epoch-3*86400]
-    evidence["recentCompleted72Hours"]={
-        "count":len(recent),
-        "mae":round(float(np.mean([abs(r["actual"]-r["prediction"]) for r in recent])),2) if recent else None,
-        "persistenceMae":round(float(np.mean([abs(r["actual"]-r["persistence"]) for r in recent])),2) if recent else None,
-        "closedMainReferenceMae":round(float(np.mean([abs(r["actual"]-r.get("closedPrediction",r["prediction"])) for r in recent])),2) if recent else None,
-        "meanErrorPredictionMinusActual":round(float(np.mean([r["prediction"]-r["actual"] for r in recent])),2) if recent else None,
-        "selectionBasis":"target_end_in_latest_72_hours_and_strictly_before_issue",
-        "independentOrigins":False,
+def _issue_archive_revision(db_path):
+    """Invalidate a same-issue result cache when a new frozen issue arrives."""
+    try:
+        with closing(sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=20)) as conn:
+            return conn.execute("SELECT COALESCE(MAX(rowid),0) FROM window_pm_forecast_issues").fetchone()[0]
+    except sqlite3.OperationalError as error:
+        if "no such table" in str(error):return 0
+        raise
+
+
+def _session_actual(frame,start_epoch):
+    """Use the published eight-closed-bucket target and coverage policy."""
+    start=pd.Timestamp(start_epoch,unit="s",tz="UTC").tz_convert("Asia/Kuala_Lumpur")
+    points=frame.pm02.reindex([start+pd.Timedelta(minutes=15*k) for k in range(1,9)]).to_numpy(float)
+    return float(points.mean()) if np.isfinite(points).all() else None
+
+
+def _issued_evidence(db_path,frame,window_key,start_epoch,end_epoch,origin_epoch,issue_epoch,issue_lag,
+                     candidate_version=CANDIDATE_MODEL_VERSION):
+    """Score frozen candidate issues at this exact relative lead and local clock.
+
+    The issue lag may vary by at most one minute. Each row must be published
+    before its target starts, contain the unchanged v5 numerical/weight policy,
+    and have eight covered target buckets completed before the current issue.
+    Historical replay fits are never substituted for an issued forecast.
+    """
+    pairs=[];missing=0;excluded=0
+    try:
+        with closing(sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=20)) as conn:
+            archived=conn.execute("""SELECT origin_epoch,start_epoch,end_epoch,issued_epoch,
+                       predicted_mean,anchor_pm25,payload FROM window_pm_forecast_issues
+                       WHERE model_version=? AND window_key=? AND end_epoch<? AND origin_epoch<?
+                       ORDER BY origin_epoch""",
+                       (candidate_version,window_key,issue_epoch,origin_epoch)).fetchall()
+    except sqlite3.OperationalError as error:
+        if "no such table" not in str(error):raise
+        archived=[]
+    lead=start_epoch-origin_epoch
+    local_start_clock=(start_epoch+8*3600)%86400
+    local_origin_clock=(origin_epoch+8*3600)%86400
+    for old_origin,old_start,old_end,recorded_issue,candidate,baseline,payload in archived:
+        if (old_start-old_origin!=lead or old_end-old_start!=7200 or
+                (old_start+8*3600)%86400!=local_start_clock or
+                (old_origin+8*3600)%86400!=local_origin_clock):continue
+        try:
+            saved=json.loads(payload)
+            actual_issue=int(saved["forecastedAtEpoch"])
+            old_lag=actual_issue-old_origin
+            policy_valid=(
+                saved.get("modelVersion")==candidate_version and
+                (saved.get("adaptiveWeighting") or {}).get("version")==WEIGHT_POLICY_VERSION and
+                (saved.get("freshnessAdjustment") or {}).get("version")==FRESHNESS_VERSION and
+                int(saved["originEpoch"])==old_origin and
+                int(saved["startEpoch"])==old_start and
+                int(saved["endEpoch"])==old_end and
+                abs(float(saved["mean"])-float(candidate))<1e-6 and
+                abs(float(saved["sensorAnchor"])-float(baseline))<1e-6 and
+                0<=old_lag<900 and abs(old_lag-issue_lag)<=ISSUE_LAG_TOLERANCE_SECONDS and
+                actual_issue<=recorded_issue<old_start and
+                math.isfinite(float(candidate)) and math.isfinite(float(baseline)))
+        except (ValueError,TypeError,KeyError,OverflowError):policy_valid=False
+        if not policy_valid:
+            excluded+=1;continue
+        actual=_session_actual(frame,old_start)
+        if actual is None:
+            missing+=1;continue
+        pairs.append((old_start,old_end,float(candidate),float(baseline),actual,old_lag))
+    candidate_errors=np.array([actual-candidate for _,_,candidate,_,actual,_ in pairs],dtype=float)
+    baseline_errors=np.array([actual-baseline for _,_,_,baseline,actual,_ in pairs],dtype=float)
+    dates={pd.Timestamp(start,unit="s",tz="UTC").tz_convert("Asia/Kuala_Lumpur").date()
+           for start,*_ in pairs}
+    count=len(pairs);candidate_mae=float(np.abs(candidate_errors).mean()) if count else None
+    baseline_mae=float(np.abs(baseline_errors).mean()) if count else None
+    candidate_p90=float(np.quantile(np.abs(candidate_errors),.9)) if count else None
+    baseline_p90=float(np.quantile(np.abs(baseline_errors),.9)) if count else None
+    support=count>=MIN_MATCHED_ISSUES and len(dates)>=MIN_MATCHED_DAYS
+    skill=(support and candidate_mae<=baseline_mae*(1-MIN_RELATIVE_MAE_GAIN)
+           and baseline_mae-candidate_mae>=MIN_ABSOLUTE_MAE_GAIN
+           and candidate_p90<=baseline_p90)
+    recent=[pair for pair in pairs if pair[1]>=issue_epoch-3*86400]
+    evidence={
+        "available":bool(count),"count":count,"distinctDays":len(dates),
+        "matchedIssuedCount":count,"missingCompletedTargetCount":missing,
+        "excludedPolicyOrClockCount":excluded,"mae":round(candidate_mae,2) if count else None,
+        "persistenceMae":round(baseline_mae,2) if count else None,
+        "p90AbsoluteError":round(candidate_p90,2) if count else None,
+        "persistenceP90AbsoluteError":round(baseline_p90,2) if count else None,
+        "rmse":round(float(np.sqrt(np.mean(candidate_errors**2))),2) if count else None,
+        "meanErrorPredictionMinusActual":round(float(-candidate_errors.mean()),2) if count else None,
+        "persistenceRole":"same_issued_five_minute_reference_with_closed_anchor_fallback",
+        "validationMode":"as_issued_same_session_target_lead_and_local_issue_clock",
+        "evidenceRole":"frozen_candidate_versus_paired_same_issue_persistence",
+        "candidateModelVersion":candidate_version,
+        "freshnessPolicyVersion":FRESHNESS_VERSION,"adaptiveWeightPolicyVersion":WEIGHT_POLICY_VERSION,
+        "issueLagToleranceSeconds":ISSUE_LAG_TOLERANCE_SECONDS,
+        "issueLagSecondsRange":[min(pair[5] for pair in pairs),max(pair[5] for pair in pairs)] if count else None,
+        "distinctSessionTargets":len(dates),"independentOrigins":True,
+        "minimumForRange":MIN_MATCHED_ISSUES,"supportSufficient":support,
+        "skillGatePassed":bool(skill),"calibrated":False,"prospectivelyValidated":False,
+        "asIssuedBeforeOutcome":True,"incompleteTargetsScored":False,
+        "limitation":"One local sensor and a small number of matched issued days; retrospective skill selection may not generalize to future changes.",
+        "recentCompleted72Hours":{
+            "count":len(recent),
+            "mae":round(float(np.mean([abs(p[4]-p[2]) for p in recent])),2) if recent else None,
+            "persistenceMae":round(float(np.mean([abs(p[4]-p[3]) for p in recent])),2) if recent else None,
+            "selectionBasis":"same_clock_matched_issued_target_end_in_latest_72_hours",
+            "independentOrigins":True,
+        },
     }
-    evidence["missingCompletedTargetCount"]=sum(r["actual"] is None and r["targetEndEpoch"]<epoch for r in records)
-    evidence["incompleteTargetsScored"]=False
-    return evidence,np.quantile(error,[.1,.9])
+    return evidence,candidate_errors,baseline_errors
+
+
+def _published_session_selection(candidate_mean,persistence_mean):
+    """Select the requested experimental session point when it is finite."""
+    try:
+        candidate_available=math.isfinite(float(candidate_mean))
+    except (TypeError,ValueError,OverflowError):
+        candidate_available=False
+    if candidate_available:
+        return (float(candidate_mean),"user_selected_experimental_candidate",
+                "explicit_user_request",CANDIDATE_MODEL_VERSION,True)
+    return (float(persistence_mean),"same_issue_persistence",
+            "experimental_candidate_unavailable","same_issue_persistence_v1",False)
 
 
 def predict_windows(db_path,rows,windows,issue_epoch,*,rain_learning=False):
@@ -486,7 +619,8 @@ def predict_windows(db_path,rows,windows,issue_epoch,*,rain_learning=False):
     # five-minute references determine weights and this policy's residuals.
     raw_hash=hashlib.blake2b(digest_size=12)
     raw_hash.update(raw_epochs.tobytes());raw_hash.update(raw_values.tobytes())
-    key=(fit_key,live_revision,FRESHNESS_VERSION,WEIGHT_POLICY_VERSION,raw_hash.hexdigest(),issue_epoch)
+    key=(fit_key,live_revision,FRESHNESS_VERSION,WEIGHT_POLICY_VERSION,raw_hash.hexdigest(),
+         issue_epoch,_issue_archive_revision(db_path))
     with _LOCK:
         if key in _CACHE:
             result=copy.deepcopy(_CACHE[key]);_CACHE.move_to_end(key)
@@ -529,25 +663,73 @@ def predict_windows(db_path,rows,windows,issue_epoch,*,rain_learning=False):
             if not queried or queried[-1]["originEpoch"]!=origin_epoch:
                 result[name]=unavailable("insufficient_complete_training_history");continue
             records=_fresh_weighted_records(queried,rows,lag_seconds,issue_epoch)
-            row=records[-1];evidence,interval=_evidence(records,issue_epoch)
+            row=records[-1]
+            evidence,candidate_errors,baseline_errors=_issued_evidence(
+                db_path,frame,name,int(start),int(end),origin_epoch,issue_epoch,lag_seconds,
+                RAIN_MODEL_VERSION if rain_learning else CANDIDATE_MODEL_VERSION)
             evidence["issueLagSeconds"]=lag_seconds
-            evidence["freshnessPolicyVersion"]=FRESHNESS_VERSION
-            evidence["adaptiveWeightPolicyVersion"]=WEIGHT_POLICY_VERSION
             evidence["weatherAsOfPolicy"]="latest_valid_fetched_at_or_before_each_actual_issue_origin_plus_exact_lag"
             evidence["rainFeatureVersion"]=getattr(rain_features,"VERSION","rain_weather_features_v1")
-            evidence["validationMode"]="exact_target_same_issue_lag_rain_feature_and_fresh_reference_replay"
-            mean=row["prediction"]
+            candidate_mean=row["prediction"]
+            selected_candidate=False
+            # The opt-in rain model remains a standalone research candidate;
+            # it must not inherit the non-rain candidate's published skill gate.
+            if rain_learning:
+                mean=candidate_mean
+                selected_policy="experimental_rain_candidate"
+                selection_reason="opt_in_research_candidate"
+                selected_version=RAIN_MODEL_VERSION
+                interval_errors=candidate_errors
+            else:
+                (mean,selected_policy,selection_reason,selected_version,
+                 selected_candidate)=_published_session_selection(candidate_mean,row["persistence"])
+                interval_errors=candidate_errors if selected_candidate else baseline_errors
+            interval=(np.quantile(interval_errors,[.1,.9])
+                      if evidence["supportSufficient"] and len(interval_errors) else None)
             lo=max(0,mean+interval[0]) if interval is not None else None
             hi=max(0,mean+interval[1]) if interval is not None else None
-            result[name]={"available":True,"modelVersion":model_version,"source":"local_session_adaptive_model",
-                          "pointRole":"experimental_session_mean","mean":round(mean,1),"prediction":round(mean,1),
+            selection={"version":SELECTION_POLICY_VERSION,"selectedPolicy":selected_policy,
+                       "selectedModelVersion":selected_version,
+                       "candidateModelVersion":RAIN_MODEL_VERSION if rain_learning else CANDIDATE_MODEL_VERSION,
+                       "selectionReason":selection_reason,"matchedIssuedCount":evidence["count"],
+                       "distinctDays":evidence["distinctDays"],
+                       "selectionBasis":"explicit_user_request" if selected_candidate and not rain_learning else
+                                        "candidate_unavailable_fallback" if not rain_learning else "opt_in_research",
+                       "selectionReasonText":"Experimental adaptive model selected for this session at your request; a reliable issued accuracy advantage is unproven."
+                                             if selected_candidate and not rain_learning else None,
+                       "appliedToPrimaryForecast":bool(selected_candidate and not rain_learning),
+                       "skillGatePassed":bool(evidence["skillGatePassed"]),
+                       "gatesAppliedToSelection":False,
+                       "prospectivelyValidated":False,
+                       "forecastIssuedEpoch":issue_epoch,"targetStartEpoch":int(start),"targetEndEpoch":int(end),
+                       "gates":{"minimumMatchedIssues":MIN_MATCHED_ISSUES,
+                                "minimumDistinctDays":MIN_MATCHED_DAYS,
+                                "minimumAbsoluteMaeGainUgM3":MIN_ABSOLUTE_MAE_GAIN,
+                                "minimumRelativeMaeGain":MIN_RELATIVE_MAE_GAIN,
+                                "candidateP90NoWorseThanPersistence":True}}
+            result[name]={"available":True,"modelVersion":model_version,
+                          "source":"local_session_adaptive_model" if selected_candidate or rain_learning else "same_issue_persistence",
+                          "pointRole":"experimental_session_mean" if selected_candidate or rain_learning else "same_issue_persistence_session_mean",
+                          "mean":round(mean,1),"prediction":round(mean,1),
+                          "candidateForecast":{"modelVersion":RAIN_MODEL_VERSION if rain_learning else CANDIDATE_MODEL_VERSION,
+                              "numericalPolicyIdentifier":RAIN_MODEL_VERSION if rain_learning else CANDIDATE_MODEL_VERSION,
+                              "freshnessPolicyVersion":FRESHNESS_VERSION,"adaptiveWeightPolicyVersion":WEIGHT_POLICY_VERSION,
+                              "mean":round(candidate_mean,1),"prediction":round(candidate_mean,1),
+                              "forecastedAtEpoch":issue_epoch,"startEpoch":int(start),"endEpoch":int(end),
+                              "rawRangeLow":round(max(0,candidate_mean+np.quantile(candidate_errors,.1)),1)
+                                  if evidence["supportSufficient"] and len(candidate_errors) else None,
+                              "rawRangeHigh":round(max(0,candidate_mean+np.quantile(candidate_errors,.9)),1)
+                                  if evidence["supportSufficient"] and len(candidate_errors) else None},
+                          "modelSelection":selection,
                           "sensorAnchor":round(row["persistence"],1),"closedSensorAnchor":round(row["closedPersistence"],1),
                           "closedMainPrediction":round(row["closedPrediction"],1),
                           "sensorReferenceEpoch":row["freshReferenceEpoch"],"sensorReferenceCount":row["freshReferenceCount"],
                           "anchorRole":"fresh_five_minute_sensor_median_reference_not_forecast" if row["freshnessApplied"] else "closed_15_minute_median_reference_not_forecast",
                           "freshnessAdjustment":{"applied":row["freshnessApplied"],"version":FRESHNESS_VERSION,
-                              "amountUgM3":round(mean-row["closedPrediction"],4),
+                              "amountUgM3":round(candidate_mean-row["closedPrediction"],4),
                               "closedReferencePm25UgM3":round(row["closedPersistence"],1),
+                              "appliedToSelectedPoint":bool(row["freshnessApplied"] and (selected_candidate or rain_learning)),
+                              "amountRole":"adaptive_candidate_fresh_minus_closed_adjustment",
                               "prospectivelyValidated":False,
                               "referenceDifference":round(row["persistence"]-row["closedPersistence"],4),
                               "windowSeconds":REFERENCE_WINDOW_SECONDS,"featureAnchorEpoch":origin_epoch,
@@ -558,8 +740,11 @@ def predict_windows(db_path,rows,windows,issue_epoch,*,rain_learning=False):
                           "leadHours":round(lead/60,2),"target":"mean_of_eight_closed_15_minute_sensor_medians",
                           "remainingLeadHours":round((start-issue_epoch)/3600,2),
                           "rawRangeLow":None if lo is None else round(lo,1),"rawRangeHigh":None if hi is None else round(hi,1),
-                          "rangeRole":"empirical_q10_q90_session_mean_error_span","calibrated":False,"confidence":"low",
-                          "experimental":True,"usedForDecision":False,"usedForComparison":True,"trainingCount":row["trainingCount"],
+                          "rangeRole":"as_issued_same_clock_q10_q90_session_mean_error_span" if interval is not None else "unavailable_insufficient_matched_as_issued_outcomes",
+                          "uncertaintyMethod":"as_issued_same_session_target_and_issue_clock_residuals",
+                          "calibrated":False,"confidence":"low",
+                          "experimental":bool(selected_candidate or rain_learning),"usedForDecision":False,
+                          "usedForComparison":bool(selected_candidate or rain_learning),"trainingCount":row["trainingCount"],
                           "adaptiveWeightScoredCount":row["weightScoredCount"],"components":{c:round(row["closedPersistence"] if c=="persistence" else row[c],2) for c in COMPONENTS},
                           "componentsRole":"closed_sensor_features_actual_issue_weather_components_before_fresh_reference_adjustment",
                           "adaptiveWeighting":{"version":WEIGHT_POLICY_VERSION,
@@ -608,15 +793,39 @@ def record_issue(db_path,result,recorded_epoch):
             PRIMARY KEY(model_version,origin_epoch,start_epoch,end_epoch))""")
         count=0
         for name,value in result.items():
-            if not value.get("available") or value.get("modelVersion") not in (MODEL_VERSION,RAIN_MODEL_VERSION,"afternoon_direction_hgb_v1"):continue
+            if not value.get("available") or value.get("modelVersion") not in (MODEL_VERSION,RAIN_MODEL_VERSION,"afternoon_direction_hgb_v1","experimental_afternoon_delta_hgb_v1"):continue
             if int(recorded_epoch)<int(value["originEpoch"]):continue
-            if (value.get("modelVersion") == "afternoon_direction_hgb_v1"
+            if (value.get("modelVersion") in ("afternoon_direction_hgb_v1","experimental_afternoon_delta_hgb_v1")
                     and int(recorded_epoch) < int(value["forecastedAtEpoch"])):continue
-            payload=copy.deepcopy(value)
-            payload["recordedIssuedEpoch"]=int(recorded_epoch)
-            cur=conn.execute("""INSERT OR IGNORE INTO window_pm_forecast_issues
-                (model_version,origin_epoch,start_epoch,end_epoch,issued_epoch,window_key,predicted_mean,anchor_pm25,payload)
-                VALUES(?,?,?,?,?,?,?,?,?)""",(value["modelVersion"],value["originEpoch"],value["startEpoch"],value["endEpoch"],
-                    int(recorded_epoch),name,value["mean"],value["sensorAnchor"],json.dumps(payload,separators=(",",":"))))
-            count+=cur.rowcount
+            if (value.get("modelVersion") == "experimental_afternoon_delta_hgb_v1"
+                    and int(recorded_epoch) - int(value["forecastedAtEpoch"]) > 120):continue
+            to_archive=[copy.deepcopy(value)]
+            if value["modelVersion"]==MODEL_VERSION:
+                candidate=value.get("candidateForecast") or {}
+                try:
+                    finite_candidate=math.isfinite(float(candidate.get("mean")))
+                except (TypeError,ValueError,OverflowError):
+                    finite_candidate=False
+                if candidate.get("modelVersion")==CANDIDATE_MODEL_VERSION and finite_candidate:
+                    shadow=copy.deepcopy(value)
+                    shadow["modelVersion"]=CANDIDATE_MODEL_VERSION
+                    shadow["source"]="local_session_adaptive_model"
+                    shadow["pointRole"]="experimental_session_mean"
+                    shadow["mean"]=candidate["mean"]
+                    shadow["prediction"]=candidate["prediction"]
+                    shadow["rawRangeLow"]=candidate["rawRangeLow"]
+                    shadow["rawRangeHigh"]=candidate["rawRangeHigh"]
+                    applied=(value.get("modelSelection") or {}).get("selectedPolicy")=="user_selected_experimental_candidate"
+                    shadow["modelSelection"]={"version":SELECTION_POLICY_VERSION,
+                                              "selectedPolicy":"published_candidate" if applied else "shadow_candidate",
+                                              "appliedToPrimaryForecast":applied,
+                                              "publishedPrimaryModelVersion":MODEL_VERSION}
+                    to_archive.append(shadow)
+            for payload in to_archive:
+                payload["recordedIssuedEpoch"]=int(recorded_epoch)
+                cur=conn.execute("""INSERT OR IGNORE INTO window_pm_forecast_issues
+                    (model_version,origin_epoch,start_epoch,end_epoch,issued_epoch,window_key,predicted_mean,anchor_pm25,payload)
+                    VALUES(?,?,?,?,?,?,?,?,?)""",(payload["modelVersion"],payload["originEpoch"],payload["startEpoch"],payload["endEpoch"],
+                        int(recorded_epoch),name,payload["mean"],payload["sensorAnchor"],json.dumps(payload,separators=(",",":"))))
+                count+=cur.rowcount
         return count

@@ -1,8 +1,20 @@
 # Forecast model card
 
-**Public snapshot:** v18.3-public.1, 21 September 2026. **Coach contract:** 1.24.0.
+**Current published source:** v24.0.2-public.1, 8 October 2026. **Coach contract:** 1.37.0.
 
-I keep the bundled source and the later local research distinct in this card. The October 8 and October 5 records describe the owner's newer deployments and studies; the September 21 record below describes the code included in this repository. The newer modules, fitted assets and Windows service installation are not bundled here.
+The [October 8 source release](SERVER_RELEASE_2026_10_08.md) replaces the September 21 application snapshot. Earlier sections below remain dated research/deployment records; their selectors and fallback behavior do not describe the current publisher. Fitted assets, working data and the private Windows service installation are excluded.
+
+## Source release and arrival distribution — later on 8 October 2026
+
+The public source corresponds to local v24.0.2. Its fixed Ridge v3 learner publishes the +90 concentration and +90–210 mean/minimum/maximum without numerical selection or persistence substitution. A separately fixed logistic classifier, `receipt_visible_logistic_arrival_change20_40_v1`, predicts a five-class change distribution at exact +90 relative to the issue's trailing five-minute reference. Native class masses supply ≥20/≥40 fall and rise tails and the within-20 outcome. The web focuses on these arrival outcomes; the distinct first-sampled-crossing HGB output remains in the APIs and issue archive.
+
+The arrival learner uses 28 scalar sensor/time features, completed outcomes before Malaysia midnight, five-minute origins, a 28-day history and a 120-minute origin embargo. Weather and neighboring measurements are not learned inputs to this classifier. The categorical learner and numeric concentration model are separate estimators, not a single jointly fitted trajectory distribution.
+
+On 3,232 common historical issues across 34 dates, logistic class log loss was **0.365475** versus a training-prior comparator's **0.371524**; class Brier was worse, **0.155885** versus **0.150380**. At an evaluation-only 10% threshold, five of nine inspected large-fall movement episodes had an earlier signal, but only three selected warnings had positive outcomes at their own +90 endpoint; there were **23 false endpoint-warning clusters**. Rare large rises remained poorly detected, and ≥40 tail scores did not beat the prior comparator. The threshold does not gate publication.
+
+The selection followed inspected failures. Dense issues overlap, historical receipts can be unknown, and these retrospective results are not prospective validation or proof of usable preparation warnings. The classifier can assign small physically unsupported fall probabilities at low references; native values are retained and this limitation is exposed in its evidence. Source/software checks do not resolve that modeling limitation. The numerical arrival learner also missed the inspected October 8 fall's magnitude, as recorded in the earlier v23 account below.
+
+Morning retains a fixed HGB learner. Afternoon's guarded PatchTST source is included, but a source-only clone cannot reproduce its privately certified training prefix and freeze chain; it remains unavailable without compatible locally provisioned assets. The primary fresh learners can fit from a new local database after sufficient completed history accumulates. The ride range describes complete 15-minute median extrema, not a guaranteed instantaneous envelope or a confidence interval.
 
 ## Local deployment and decision review — 8 October 2026
 

@@ -68,7 +68,7 @@ from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import closing
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import math
@@ -77,6 +77,7 @@ import sqlite3
 import threading
 from types import MappingProxyType
 from typing import Mapping
+import observation_provenance
 
 VERSION = "ttdi_rain_weather_v1"
 SOURCE = "Open-Meteo Best Match"
@@ -155,6 +156,7 @@ class WeatherRun:
     missing_optional_units: tuple[str, ...]
     latitude: float | None
     longitude: float | None
+    receipt_provenance: Mapping | None = None
 
 
 @dataclass(frozen=True)
@@ -253,7 +255,7 @@ def _parse_run(fetched, archive_source, payload):
         return _remember(_PARSED_CACHE, key, run, 4096)
 
 
-def load_runs(db_path, issue_epoch) -> RunArchive:
+def load_runs(db_path, issue_epoch, *, strict_receipts=False) -> RunArchive:
     """Read-only archive snapshot; caches actual content, not row counts/mtime.
 
     For replay performance call this once at the last permissible issue and
@@ -265,30 +267,32 @@ def load_runs(db_path, issue_epoch) -> RunArchive:
     path = Path(db_path).resolve()
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=20)) as conn:
         conn.execute("PRAGMA query_only=ON")
-        rows = conn.execute(
-            "SELECT fetched_epoch,source,payload FROM weather_forecast_runs "
-            "WHERE fetched_epoch<=? ORDER BY fetched_epoch,payload", (cutoff,)
-        ).fetchall()
+        rows = observation_provenance.compatible_source_runs(conn,
+            "weather_forecast_runs",cutoff,strict=strict_receipts,include_revisions=True)
     digest = hashlib.blake2b(digest_size=20)
     normalized = []
-    for fetched, source, payload in rows:
+    for record in rows:
+        fetched, source, payload = record['fetched_epoch'],record['source'],record['payload']
+        provenance = record['_provenance']
         fetched = _finite(fetched)
         if fetched is None or fetched > cutoff:
             continue
         source = str(source)
         payload = str(payload)
-        for part in (fetched.hex(), source, payload):
+        for part in (fetched.hex(), source, payload, json.dumps(provenance,sort_keys=True,separators=(',',':'))):
             encoded = part.encode("utf-8")
             digest.update(len(encoded).to_bytes(8, "big"))
             digest.update(encoded)
-        normalized.append((fetched, source, payload))
+        normalized.append((fetched, source, payload, provenance))
     revision = digest.hexdigest()
-    key = (str(path), cutoff.hex(), revision)
+    key = (str(path), cutoff.hex(), revision, strict_receipts)
     with _LOCK:
         if key in _ARCHIVE_CACHE:
             _ARCHIVE_CACHE.move_to_end(key)
             return _ARCHIVE_CACHE[key]
-    runs = tuple(_parse_run(*row) for row in normalized)
+    runs = tuple(replace(_parse_run(fetched,source,payload),
+        receipt_provenance=MappingProxyType(dict(provenance)))
+        for fetched,source,payload,provenance in normalized)
     archive = RunArchive(runs, tuple(run.fetched_epoch for run in runs), cutoff,
                          revision, str(path))
     with _LOCK:
@@ -298,7 +302,14 @@ def load_runs(db_path, issue_epoch) -> RunArchive:
 def latest_run(runs: RunArchive, issue_epoch) -> WeatherRun | None:
     issue = _epoch(issue_epoch, "issue_epoch")
     index = bisect_right(runs.fetched_epochs, issue) - 1
-    return runs[index] if index >= 0 else None
+    while index >= 0:
+        run = runs[index]
+        evidence = run.receipt_provenance or {}
+        available = evidence.get('availableEpoch')
+        if evidence.get('receiptKnown') is not True or (available is not None and available <= issue):
+            return run
+        index -= 1
+    return None
 
 
 def selected_payload(runs: RunArchive, issue_epoch) -> dict | None:
@@ -471,7 +482,8 @@ def describe_window(runs: RunArchive, issue_epoch, start_epoch, end_epoch) -> di
     if start < issue or end < start:
         raise ValueError("require issue_epoch <= start_epoch <= end_epoch")
     run = latest_run(runs, issue)
-    source_key = None if run is None else (run.fetched_epoch.hex(), run.payload_hash, run.validation_errors)
+    source_key = None if run is None else (run.fetched_epoch.hex(), run.payload_hash, run.validation_errors,
+        json.dumps(dict(run.receipt_provenance or {}),sort_keys=True,separators=(',',':')))
     key = (VERSION, source_key, issue.hex(), start.hex(), end.hex(), issue > runs.cutoff_epoch)
     with _LOCK:
         if key in _DESCRIPTION_CACHE:
@@ -495,7 +507,9 @@ def describe_window(runs: RunArchive, issue_epoch, start_epoch, end_epoch) -> di
         "source": run.source if run else None,
         "fetchedEpoch": run.fetched_epoch if run else None,
         "payloadHash": run.payload_hash if run else None,
-        "selectedBy": "latest_fetched_at_or_before_actual_issue",
+        "selectedBy": "latest_fetched_and_receipt_available_at_or_before_actual_issue_legacy_unknown",
+        "receiptProvenance": dict(run.receipt_provenance or {}) if run else None,
+        "receiptKnown": bool(run and run.receipt_provenance and run.receipt_provenance.get('receiptKnown') is True),
         "maxWeatherAgeSeconds": MAX_AGE_SECONDS,
         "precipitationSemantics": "preceding_hour_amount_overlap_weighted",
         "probabilitySemantics": "preceding_hour_probability_duration_weighted_not_event_union",

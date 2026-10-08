@@ -27,28 +27,54 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import haze_transport
 import window_pm_predictor
+import weather_session_forecast
+import afternoon_xgboost_forecast
+import patchtst_session_forecast
 import afternoon_direction_forecast
+import near_term_hazard
+import short_horizon_change
+import large_change_live
+import cycling_window_live
+import session_event_regressor
 import cams_local_correction
 from collection_quality import bucket_coverage, collection_summary
 from forecast_archive import record_dashboard_issue
 from forecast_clock import ForecastClock, target_series, score_observed_window, targets_match
 import forecast_freshness
 import rain_pm_forecast
+import radar_shadow
+import regional_pm_inputs
+import neighbor_pm_inputs
+import storm_precursor_inputs
 from analysis_delivery import AnalysisDelivery
+import rlcd_api
+import lan_discovery
+import weather_contracts
+import session_prediction_policy
+import observation_provenance
+import prospective_validation
+import model_output_contracts
+import ride_pm_extrema
+import momentum_display
+import fresh_event_model_v2 as fresh_event_model
+import fresh_numeric_model_v3 as fresh_numeric_model
+import arrival_feature_inputs
+import arrival_logistic_model as arrival_change_model
+import fresh_model_output
 
 # ============================================================
 # Bukit Kiara / TTDI AirGradient Ride Dashboard
 # Pandas provides time-bucketed particle and arrival-error analysis.
 # ============================================================
 
-# Public distribution is loopback-only unless the operator opts into LAN access.
+# Public distribution uses loopback unless the operator opts into LAN access.
 HOST = os.environ.get("BUKIT_KIARA_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BUKIT_KIARA_PORT", "8765"))
-LOCATION_ID = 86311
+LOCATION_ID = int(os.environ.get("BUKIT_KIARA_LOCATION_ID", "86311"))
 API_URL = f"https://api.airgradient.com/public/api/v1/world/locations/{LOCATION_ID}/measures/current"
 
-WEATHER_LATITUDE = 3.1411106257487
-WEATHER_LONGITUDE = 101.62749852676
+WEATHER_LATITUDE = float(os.environ.get("BUKIT_KIARA_LATITUDE", "3.1411106257487"))
+WEATHER_LONGITUDE = float(os.environ.get("BUKIT_KIARA_LONGITUDE", "101.62749852676"))
 WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
 AIR_QUALITY_API_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 WEATHER_POLL_SECONDS = 900  # Refresh the model cache every 15 minutes, independently of browsers.
@@ -62,6 +88,9 @@ AIR_QUALITY_FORECAST_HOURS = 48
 AIR_QUALITY_MODEL_VERSION = "cams_anchor_v2"
 AIR_QUALITY_COMPATIBLE_ARCHIVES = ("cams_anchor_v1", "cams_anchor_v2")
 AIR_QUALITY_FORECAST_METHOD_VERSION = "cams_interval_aligned_v4"
+# Legacy research settings below remain for historical diagnostic helpers.
+# The current publication path uses fixed raw model outputs and never invokes
+# these numerical selection routines.
 # The rider has explicitly selected a responsive operating mode.  These fixed
 # weights are an explicitly aggressive operating choice informed by the current
 # horizon-embargoed replay.  They are not prospectively validated; the local
@@ -70,6 +99,7 @@ AIR_QUALITY_FORECAST_METHOD_VERSION = "cams_interval_aligned_v4"
 # alter a live point. The mean uses a strongly shrunk robust Ridge candidate;
 # the peak retains the bounded matched-analogue outcome.
 AGGRESSIVE_FORECAST_ENABLED = True
+ARRIVAL_PERSISTENCE_ONLY = True  # Legacy overlays disabled; Oct 1 signed candidates failed review.
 AGGRESSIVE_ARRIVAL_ANALOGUE_WEIGHT = 0.25
 AGGRESSIVE_TRAIL_MEAN_RIDGE_WEIGHT = 0.25
 AGGRESSIVE_TRAIL_PEAK_ANALOGUE_WEIGHT = 0.50
@@ -120,8 +150,13 @@ DRY_CLEARING_MAX_PRECIPITATION = 0.1
 
 POLL_SECONDS = 180       # collect every 3 minutes
 RETENTION_DAYS = 400     # Preserve more than one year for future seasonal validation.
-RIDE_API_SCHEMA_VERSION = "1.24.0"
-DASHBOARD_BUILD = "2026-09-21-reviewed-provenance-v18.3-public.1"
+RIDE_API_SCHEMA_VERSION = "1.37.0"
+DASHBOARD_BUILD = "2026-10-08-arrival-preparation-models-v24.0.2-public.1"
+ACTIVE_VALIDATION_RECIPES = {
+    "point90": "near_fresh_arrival_model_direct_v23", "mean90_210": "near_fresh_mean_model_direct_v23",
+    "morningSession": "morning_hgb_model_direct_v21",
+    "afternoonSession": "afternoon_patchtst_model_direct_v21",
+}
 RIDE_API_ANALYSIS_DAYS = 28.0
 SENSOR_DEGRADED_SECONDS = POLL_SECONDS * 2 + 60
 SENSOR_UNAVAILABLE_SECONDS = 15 * 60
@@ -231,7 +266,9 @@ RIDE_WINDOWS = [
 ]
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "bukit_kiara_air_history.db"
+DATA_DIR = Path(os.environ.get("BUKIT_KIARA_DATA_DIR", str(BASE_DIR))).expanduser().resolve()
+DB_PATH = DATA_DIR / "bukit_kiara_air_history.db"
+RADAR_SHADOW_PATH = DATA_DIR / "private" / "radar-shadow.jsonl"
 COACH_API_DOC_PATH = BASE_DIR.parent / "docs" / "COACH_API.md"
 
 FIELDS = [
@@ -318,6 +355,11 @@ button:hover,.button:hover{background:#2b3035}
 .signal{font-weight:730;line-height:1.25}
 .note,.signal-note{font-size:.78rem;color:var(--muted);line-height:1.42}
 .signal-note{margin-top:6px}
+.event-probabilities{display:flex;flex-wrap:wrap;gap:4px 12px;margin:8px 0 6px;font-size:.78rem;color:var(--muted)}
+.event-probabilities strong{color:var(--text)}
+.event-clock{margin-top:6px}
+#trailForecastCard .method-details{margin-top:10px}
+#arrivalCard .method-details{margin-top:8px;font-size:.73rem}
 .decision-panel{border-top:3px solid var(--cyan);padding-top:15px}
 .eyebrow{font-size:.72rem;font-weight:760;letter-spacing:.09em;text-transform:uppercase;color:var(--cyan);margin-bottom:6px}
 .verdict{font-size:clamp(1.55rem,3.2vw,2.25rem);font-weight:800;letter-spacing:-.035em;line-height:1.05;margin:0 0 7px}
@@ -408,21 +450,34 @@ details.panel[open] summary::after{content:"−"}
     <div class="now-card">
       <div class="label">Current PM2.5</div>
       <div class="value"><span id="pm02">—</span><span class="unit">µg/m³</span></div>
-      <div class="signal" id="particleLoad">Raw sensor concentration</div>
+      <div class="signal" id="particleLoad">Latest sensor reading</div>
       <div class="signal-note" id="currentTrend">Recent movement collecting…</div>
       <div class="signal-note" id="particleMixSignal" hidden></div>
     </div>
     <div class="now-card" id="arrivalCard">
-      <div class="label">PM2.5 forecast · 90 min after issue</div>
+      <div class="label" id="arrivalTitle">PM2.5 forecast · +90 min</div>
       <div class="value"><span id="arrivalValue">—</span><span class="unit">µg/m³</span></div>
-      <div class="signal" id="nowcastSignal">Preparing forecast…</div>
-      <div class="signal-note" id="arrivalBand">—</div>
+      <div class="signal" id="arrivalChangeSignal" role="status">Preparing arrival forecast…</div>
+      <div class="event-probabilities" id="arrivalChangeProbabilities" hidden>
+        <span>Fall ≥20: <strong id="arrivalFall20Probability">—</strong> · ≥40: <strong id="arrivalFall40Probability">—</strong></span>
+        <span>Rise ≥20: <strong id="arrivalRise20Probability">—</strong> · ≥40: <strong id="arrivalRise40Probability">—</strong></span>
+        <span>No ≥20 change: <strong id="arrivalWithin20Probability">—</strong></span>
+      </div>
+      <div class="note event-clock" id="arrivalChangeClock"></div>
+      <details class="method-details" id="arrivalChangeDetails" hidden><summary>Arrival model &amp; checks</summary>
+        <div class="note" id="arrivalChangeEvidence"></div>
+      </details>
     </div>
     <div class="now-card" id="trailForecastCard">
-      <div class="label">PM2.5 2-hour mean range · issue +90 to +210 min</div>
-      <div class="value range-value"><span id="trailMean">—</span><span class="unit">µg/m³</span></div>
-      <div class="signal" id="trailSignal">Preparing forecast…</div>
-      <div class="signal-note" id="trailBand">—</div>
+      <div class="label">Ride forecast · +90 to +210 min</div>
+      <div class="value"><span id="trailMean">—</span><span class="unit">µg/m³</span></div>
+      <div class="signal" id="trailSignal">Preparing model output…</div>
+      <div class="signal-note" id="cyclingProbabilityLine">Chance average ≤70 µg/m³: <strong id="cyclingProbability">—</strong></div>
+      <div class="signal-note" id="cyclingWindowClock">Waiting for a fresh probability.</div>
+      <details class="method-details"><summary>PM2.5 range &amp; model</summary>
+        <div class="signal-note" id="trailBand">—</div>
+        <div class="signal-note" id="trailRapidChangeRisk">Rapid-change check collecting…</div>
+      </details>
     </div>
     <div class="now-card" id="showerCard">
       <div class="label">Current heat and weather</div>
@@ -460,11 +515,8 @@ details.panel[open] summary::after{content:"−"}
 
   <section class="panel decision-panel" id="comparisonPanel">
     <div class="section-head">
-      <div><h2>Morning and afternoon · PM2.5 forecast</h2><div class="note">Estimated local concentration during each 2-hour session</div></div>
-      <div class="comparison-progress" id="comparisonProgress">PM model starting…</div>
+      <div><h2>Morning and afternoon · PM2.5 outlook</h2><div class="note">Direct model estimates for each exact 2-hour session</div></div>
     </div>
-    <div class="verdict" id="comparisonVerdict" style="margin-top:13px">Preparing forecast…</div>
-    <p class="verdict-reason" id="comparisonReason">Waiting for both issued ride-window forecasts.</p>
 
     <div class="decision-grid" id="comparisonGrid" hidden>
       <article class="window-card" id="morningCard">
@@ -487,13 +539,14 @@ details.panel[open] summary::after{content:"−"}
         <div class="window-foot"><span class="confidence" id="afternoonConfidence">Low confidence</span><span class="recheck" id="afternoonRecheck">Forecasted at —</span></div>
       </article>
     </div>
-    <details class="method-details"><summary>Forecast method and validation</summary><div class="note" id="modelReview">21 Sep: experimental direction model for the 14:00–16:00 forecast issued 07:00–08:00. Other forecasts unchanged. It caught more historical changes but also falsely predicted clearing; not prospectively validated.</div><div class="note" id="windowModelValidation">PM model checks collecting…</div><div class="note" id="regionalModelProvenance">Forecast sources collecting…</div><div class="note" id="localModelValidation">Near-term issued forecast validation collecting…</div></details>
+    <details class="method-details"><summary>Forecast method and validation</summary><div class="note" id="modelReview">Afternoon uses PatchTST when its daily model and exact session inputs are ready. Issued accuracy is collecting.</div><div class="note" id="windowModelValidation">PM model checks collecting…</div><div class="note" id="regionalModelProvenance">Forecast sources collecting…</div><div class="note" id="localModelValidation">Near-term issued forecast validation collecting…</div><div class="note" id="rapidChangeProvenance">Rapid-change check collecting…</div><div class="note" id="shortHorizonProvenance">15/30-minute change check collecting…</div></details>
   </section>
 
   <details class="panel">
     <summary>History and sensor details</summary>
     <div class="detail-content">
       <div class="note" style="margin-top:13px">AirGradient readings and issued weather runs are stored locally in <strong>bukit_kiara_air_history.db</strong> for ongoing forecast checks.</div>
+      <div class="note">Radar observation source: <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">Weather data by RainViewer</a>. Collected separately; not used in PM2.5 forecasts.</div>
       <div class="note" id="weatherProvenance" style="margin-top:8px">Weather sources collecting…</div>
       <div class="note" id="transportStatus" style="margin-top:5px">Regional wind context is collecting; it is not used in PM2.5 forecasts.</div>
       <div class="secondary">
@@ -542,6 +595,14 @@ const HEAT_SERIES=[
 ];
 
 const $=id=>document.getElementById(id);
+function modelDisplayText(value){
+  return String(value??"")
+    .replace(/\bexperimental\b/gi,"")
+    .replace(/(^|\s)·\s*·/g,"$1·")
+    .replace(/^\s*[·:]\s*|\s*[·:]\s*$/g,"")
+    .replace(/[ \t]{2,}/g," ")
+    .trim();
+}
 function f(v,d=1){
   if(v===null||v===undefined||!Number.isFinite(Number(v)))return "—";
   return Number(v).toFixed(d).replace(/\.0$/,"");
@@ -599,6 +660,17 @@ function showStoredHistory(hours){
 function updateCurrentTrend(){
   if(latestCurrent)$("currentTrend").textContent=trend(latestCurrent.pm02,previous("pm02")," µg/m³");
 }
+function updateCurrentObservation(analysis=lastForecast){
+  const observed=analysis?.airWindow?.observedMovement;
+  const epoch=Number(latestCurrent?.epoch);
+  const through=Number(observed?.observedThroughEpoch??analysis?.current?.epoch);
+  const age=Number(latestCurrent?.ageSeconds??0);
+  const label=observed?.eventLabel;
+  const recent=typeof label==="string"&&label.trim()&&Number.isFinite(epoch)&&epoch>0
+    &&Number.isFinite(through)&&through>0&&through<=epoch&&epoch-through<=600
+    &&Number.isFinite(age)&&age>=0&&age<=720;
+  $("particleLoad").textContent=recent?"Observed: "+label:"Latest sensor reading";
+}
 function loadCurrent(){
   if(currentPromise)return currentPromise;
   currentPromise=fetchCurrent().catch(e=>{
@@ -627,7 +699,7 @@ async function fetchCurrent(){
   latestCurrent=r;
   ["pm01","pm02","pm10","heatindex","atmp","rhum","rco2","tvocIndex","noxIndex"].forEach(id=>$(id).textContent=f(r[id]));
   $("pm003Count").textContent=countf(r.pm003Count);
-  $("particleLoad").textContent="Raw sensor concentration";
+  updateCurrentObservation();
   $("heatLoad").textContent="Apparent temperature";
   $("heatContext").textContent="Temperature "+f(r.atmp)+" °C · humidity "+f(r.rhum,0)+"%";
   updateCurrentTrend();
@@ -652,6 +724,7 @@ async function loadHistory(){
   hist=d.readings||[];
   historyGaps=d.gaps||[];
   updateCurrentTrend();
+  updateCurrentObservation();
   const s=d.summary?.pm02||stats(hist.map(x=>x.pm02));
   $("pmAvg").textContent=s.avg==null?"—":f(s.avg)+" µg/m³";
   $("pmMin").textContent=s.min==null?"—":f(s.min)+" µg/m³";
@@ -663,25 +736,45 @@ async function loadHistory(){
   draw($("heatChart"),HEAT_SERIES);
 }
 
+function renderCyclingWindowForecast(payload,expectedIssue=null){
+  const chance=payload?.chanceMeanAtOrBelowCutoff;
+  const issued=payload?.forecastIssuedEpoch,start=payload?.startEpoch,end=payload?.endEpoch;
+  const epoch=value=>typeof value==="number"&&Number.isInteger(value)&&value>0;
+  const now=Date.now()/1000;
+  const valid=payload?.available===true&&typeof chance==="number"&&Number.isFinite(chance)&&chance>=0&&chance<=1
+    &&payload.cutoffUgM3===70&&epoch(issued)&&epoch(start)&&epoch(end)
+    &&typeof payload.referencePm==="number"&&Number.isFinite(payload.referencePm)&&payload.referencePm>=0
+    &&start===issued+5400&&end===issued+12600&&issued<=now&&now-issued<=120
+    &&epoch(expectedIssue)&&issued===expectedIssue;
+  $("cyclingProbability").textContent=valid?f(chance*100,1)+"%":"—";
+  if(!valid){
+    $("cyclingWindowClock").textContent="Waiting for a fresh probability.";
+    return;
+  }
+  const stamp=epoch=>new Date(epoch*1000).toLocaleString("en-GB",{timeZone:"Asia/Kuala_Lumpur",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit",hour12:false});
+  $("cyclingWindowClock").textContent=stamp(start)+"–"+stamp(end)+" · issued "+stamp(issued);
+}
+
 function forecastAgeSeconds(){
   return forecastAgeAtReceipt==null?null:Math.max(0,forecastAgeAtReceipt+(Date.now()-forecastReceivedAt)/1000);
 }
 function clearForecast(message,detail=""){
   lastForecast=null;
   ["arrivalValue","trailMean","morningAir","afternoonAir"].forEach(id=>$(id).textContent="—");
-  ["arrivalBand","trailBand","morningTrial","afternoonTrial","morningRisk","afternoonRisk","morningAirDetail","afternoonAirDetail","morningWeatherDetail","afternoonWeatherDetail"].forEach(id=>$(id).textContent="");
+  ["trailBand","morningTrial","afternoonTrial","morningRisk","afternoonRisk","morningAirDetail","afternoonAirDetail","morningWeatherDetail","afternoonWeatherDetail"].forEach(id=>$(id).textContent="");
+  $("arrivalTitle").textContent="PM2.5 reference · next 90 min";
+  ["trailRapidChangeRisk","rapidChangeProvenance"].forEach(id=>$(id).textContent="Rapid-change check unavailable");
+  $("shortHorizonProvenance").textContent="15/30-minute change check unavailable";
+  renderCyclingWindowForecast(undefined);
+  renderArrivalChangeForecast(null,0,null);
   ["morningHeat","afternoonHeat"].forEach(id=>$(id).textContent="Forecast unavailable");
   ["morningTarget","afternoonTarget"].forEach(id=>$(id).textContent="—");
   ["morningRecheck","afternoonRecheck"].forEach(id=>$(id).textContent="Forecasted at —");
-  $("nowcastSignal").textContent=message;
   $("trailSignal").hidden=false;
   $("trailSignal").textContent=message;
   $("trailWeatherSignal").textContent=message;
   $("showerSignal").hidden=true;
   $("comparisonGrid").hidden=true;
-  $("comparisonVerdict").textContent=message;
-  $("comparisonReason").textContent=detail;
-  $("comparisonProgress").textContent=message;
 }
 function updateForecastStatus(){
   const age=forecastAgeSeconds();
@@ -690,6 +783,7 @@ function updateForecastStatus(){
     clearForecast("Forecast expired", "Preparing an updated forecast.");
     nextForecastAt=Math.min(nextForecastAt,Date.now());
   }
+  renderCyclingWindowForecast(lastForecast?.airWindow?.cyclingWindowForecast,lastForecast?.airWindow?.forecastClock?.forecastIssuedEpoch);
   let label=forecastDelivery.state==="expired"?"Forecast expired":
     forecastDelivery.state==="error"?"Forecast unavailable":
     lastForecast?(forecastDelivery.updating||forecastDelivery.state==="initializing"||forecastDelivery.state==="updating"||forecastPromise?"Updating forecast…":"Forecast ready"):
@@ -748,6 +842,53 @@ function loadAnalysis(){
   updateForecastStatus();
   return forecastPromise;
 }
+function rapidChangeRiskText(risk,target){
+  const value=Number(target?.probability);
+  if(!risk?.available||!target?.available||target.probability==null||!Number.isFinite(value)||typeof target.flag!=="boolean"){
+    return "Large-change probability unavailable";
+  }
+  const threshold=f(risk.thresholdUgM3,0);
+  return "Large PM2.5 change (≥"+threshold+" µg/m³ either way): "+
+    f(value*100,0)+"%"+(target.flag?" · elevated":"");
+}
+function renderArrivalChangeForecast(source,expectedIssue,arrival){
+  const ids=["arrivalFall20Probability","arrivalFall40Probability","arrivalRise20Probability","arrivalRise40Probability","arrivalWithin20Probability"];
+  const fields=["probabilityFall20","probabilityFall40","probabilityRise20","probabilityRise40","probabilityWithin20"];
+  const unavailable=message=>{
+    $("arrivalChangeSignal").textContent=message;
+    $("arrivalChangeProbabilities").hidden=true;
+    ids.forEach(id=>$(id).textContent="—");
+    $("arrivalChangeClock").textContent="";
+    $("arrivalChangeDetails").hidden=true;
+    $("arrivalChangeEvidence").textContent="";
+  };
+  if(source?.available!==true){unavailable("Arrival change forecast unavailable");return;}
+  const p=fields.map(name=>source[name]);
+  const valid=p.every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0&&value<=1);
+  const issued=source.forecastIssuedEpoch,target=source.arrivalEpoch,reference=source.referencePm;
+  const clockValid=typeof issued==="number"&&Number.isFinite(issued)&&issued>0
+    &&issued===Number(expectedIssue)&&target===issued+5400&&issued<=Date.now()/1000+60;
+  const referenceValid=typeof reference==="number"&&Number.isFinite(reference)&&reference>=0
+    &&typeof arrival?.baselinePoint==="number"&&Math.abs(reference-arrival.baselinePoint)<=1e-7;
+  const coherent=valid&&p[1]<=p[0]+1e-12&&p[3]<=p[2]+1e-12&&Math.abs(p[0]+p[2]+p[4]-1)<=1e-8;
+  if(!clockValid||!referenceValid||!coherent||source.arrivalLeadMinutes!==90
+      ||source.target!=="exact_issue_plus90_arrival_median_proxy_delta_from_fresh5_reference"){
+    unavailable("Arrival change forecast unavailable");return;
+  }
+  if(Date.now()/1000>target){unavailable("Arrival change forecast expired");return;}
+  const outcomes=[{probability:p[0],text:"Fall on arrival"},
+    {probability:p[2],text:"Rise on arrival"},{probability:p[4],text:"No change on arrival"}];
+  const largest=Math.max(...outcomes.map(outcome=>outcome.probability));
+  const leaders=outcomes.filter(outcome=>outcome.probability===largest);
+  $("arrivalChangeSignal").textContent=leaders.length===1?leaders[0].text:"Arrival outcome uncertain";
+  ids.forEach((id,index)=>$(id).textContent=p[index]>0&&p[index]<0.001?"<0.1%":f(p[index]*100,1)+"%");
+  $("arrivalChangeProbabilities").hidden=false;
+  const arrivalDate=new Date(target*1000).toLocaleDateString([], {timeZone:"Asia/Kuala_Lumpur",day:"numeric",month:"short"});
+  $("arrivalChangeClock").textContent=arrivalDate+" "+klClock(target)+" · from "+f(reference)+" µg/m³ · issued "+klClock(issued);
+  $("arrivalChangeEvidence").textContent=source.performanceEvidence?.summary
+    ||"These percentages refer to the concentration at arrival, compared with the issue-time sensor reference. Completed issued forecasts are being collected for accuracy checks.";
+  $("arrivalChangeDetails").hidden=false;
+}
 function renderAnalysis(a){
   const currentIsFresh=!latestCurrent||Number(a.current?.epoch)>=Number(latestCurrent.epoch);
   const o=a.outlook||{};
@@ -756,14 +897,9 @@ function renderAnalysis(a){
     const momentum=arrow+" "+f(Math.abs(o.momentumChange))+" µg/m³ over "+o.momentumMinutes+" min";
     $("currentTrend").textContent=momentum;
   }else if(currentIsFresh){
-    $("currentTrend").textContent=o.message||a.message||"Recent movement collecting…";
+    $("currentTrend").textContent=modelDisplayText(o.message||a.message||"Recent movement collecting…");
   }
 
-  const c=a.comparison||{};
-  const model=c.model||{};
-  $("comparisonVerdict").textContent=c.headline||"Outlook collecting";
-  $("comparisonReason").textContent=c.summary||"Both windows are still collecting.";
-  $("comparisonProgress").textContent=model.displayLabel||"Experimental PM forecast";
   const weather=a.weather||{};
   const weatherWindows=weather.windows||{};
   const hasWindowOutlook=Boolean(
@@ -781,52 +917,85 @@ function renderAnalysis(a){
       ? new Date(w.startEpoch*1000).toLocaleDateString([], {timeZone:"Asia/Kuala_Lumpur",weekday:"short",day:"numeric",month:"short"})
       : (w.targetLabel||"Upcoming");
     const logistics=w.decisionLabel?" · "+w.decisionLabel:"";
-    $(prefix+"Target").textContent=targetDate+" · within "+(w.rideLabel||wf.window||"—")+logistics;
+    $(prefix+"Target").textContent=targetDate+" · exact "+(w.modeledSessionLabel||wf.modeledSession||"—")+logistics;
     const pointAvailable=Boolean(pf.available&&pf.point!=null);
     const referenceOnly=pf.pointRole==="persistence_anchor";
+    const selection=pf.modelSelection||{};
+    const selectedExperimental=selection.selectedPolicy==="user_selected_experimental_candidate";
+    const rainInput=pf.rainContext||{};
+    const rainFeatures=rainInput.featureValues||{};
+    const priorRainMm=Number(rainFeatures.priorRainMm);
+    const duringRainMm=Number(rainFeatures.duringRainMm);
+    const duringRainChance=Number(rainFeatures.duringRainProbMean);
+    const weatherClocksMatch=rainInput.fetchedEpoch!=null&&wf.sourceFetchedEpoch!=null&&
+      Number(rainInput.fetchedEpoch)===Number(wf.sourceFetchedEpoch);
+    const rainAhead=wf.available&&rainInput.available&&weatherClocksMatch&&
+      duringRainMm>=1&&duringRainChance>=80;
+    const rainScenario=referenceOnly&&rainAhead;
     const directional=Boolean(pf.directionalModel?.applied);
-    $(prefix+"Badge").textContent=pointAvailable?(directional?"Experimental direction":referenceOnly?"Persistence baseline":"Adaptive local model"):"Unavailable";
-    $(prefix+"Air").textContent=pointAvailable?(referenceOnly?"":"≈")+f(pf.point,0)+" µg/m³":"—";
+    const sessionDelta=Boolean(pf.sessionDeltaModel?.applied);
+    const weatherSession=Boolean(pf.weatherSessionModel?.applied);
+    const xgboostSession=String(pf.modelVersion||"").startsWith("afternoon_xgboost_");
+    const patchtstSession=String(pf.modelVersion||"").startsWith("afternoon_patchtst_")&&pf.patchtstModel?.applied===true;
+    $(prefix+"Badge").textContent=pointAvailable?(patchtstSession?"PatchTST model output":xgboostSession?"XGBoost model output":weatherSession?"Weather model output":sessionDelta?"Session-change model output":directional?"Direction model output":referenceOnly?(rainScenario?"Current PM baseline · rain ahead":"Persistence baseline"):selectedExperimental?"Model output":"Adaptive local model"):"Unavailable";
+    $(prefix+"Air").textContent=pointAvailable?f(pf.point,1)+" µg/m³":"—";
+    const candidate=pf.candidateForecast||{};
+    const rawCandidate=Number(candidate.mean);
+    const candidateAvailable=candidate.available!==false&&candidate.mean!=null&&Number.isFinite(rawCandidate);
+    const candidateLabel=String(candidate.modelVersion||"").includes("patchtst")?"PatchTST":String(candidate.modelVersion||"").includes("xgboost")?"XGBoost":"Weather model";
     const anchor=pf.baselinePoint;
     const change=anchor==null||pf.point==null?null:pf.point-anchor;
-    $(prefix+"AirDetail").textContent=pointAvailable
-      ? (referenceOnly?"No skill-supported change estimate":("Estimated 2-hour mean"+(change==null?"":" · "+(change>=0?"+":"")+f(change,0)+(directional||pf.freshnessAdjustment?.applied?" vs recent sensor reference":" vs latest completed reading"))))
-      : pf.message||"Insufficient recent data for this session";
+    $(prefix+"AirDetail").textContent=modelDisplayText(pointAvailable
+      ? (referenceOnly?(rainScenario?"Current PM reference; forecast rain could lower PM, but the amount is unproven.":"No skill-supported change estimate"):("Estimated 2-hour mean"+(change==null?"":" · "+(change>=0?"+":"")+f(change,0)+(patchtstSession||weatherSession||directional||sessionDelta||pf.freshnessAdjustment?.applied?" vs recent sensor reference":" vs latest completed reading"))))
+      : pf.message||"Insufficient recent data for this session");
+    if(referenceOnly){
+      $(prefix+"AirDetail").textContent=modelDisplayText(candidateAvailable?"Exact 2-hour mean: model output shown separately from its sensor reference.":"Exact 2-hour mean: sensor reference. Model output unavailable: "+String(candidate.reason||"insufficient inputs").replaceAll("_"," "));
+    }
+    if(pf.pointRole==="experimental_model_output"||pf.pointRole==="raw_model_output"){
+      $(prefix+"Badge").textContent=pointAvailable?(patchtstSession?"PatchTST model output":"HGB model output"):"Model output unavailable";
+      $(prefix+"AirDetail").textContent=modelDisplayText(pointAvailable?"Exact 2-hour mean · direct model output":pf.message||"Model output unavailable");
+    }
     const risk=[];
     const trial=pf.regionalCorrectionTrial||{},correction=trial.regionalCorrection||{};
     let trialText="";
     if(trial.available&&trial.meanPm25UgM3!=null){
       const offset=correction.learnedCorrectionPm25UgM3;
       trialText="CAMS + local trial ≈"+f(trial.meanPm25UgM3,1)+" µg/m³: regional "+f(correction.regionalMeanPm25UgM3,1)+(offset<0?" − ":" + ")+f(Math.abs(offset),1)+" local correction"+(correction.nonnegativeFloorApplied?" · zero floor applied":"")+" · not applied to main forecast";
+    }else if(trial.status==="suspended_live_diagnostics"){
+      trialText="CAMS + local trial paused; live diagnostic fitting is off to keep published forecasts fresh.";
     }else if(trial.modelVersion){
-      trialText="CAMS + local trial unavailable: "+String(trial.reason||"missing inputs").replaceAll("_"," ");
+      trialText="CAMS + local trial unavailable: "+String(trial.reason||"trial result unavailable").replaceAll("_"," ");
     }
-    $(prefix+"Trial").textContent=trialText;
+    $(prefix+"Trial").textContent=modelDisplayText(trialText);
     $(prefix+"Trial").hidden=!trialText;
     if(pf.method){risk.push("Main forecast: "+pf.method)}
-    const selection=pf.modelSelection||{};
+    if(pf.experimentalPatchtstFallback?.reason){risk.push("PatchTST unavailable: "+String(pf.experimentalPatchtstFallback.reason).replaceAll("_"," "))}
     if(selection.selectionReasonText){risk.push(selection.selectionReasonText)}
     if(selection.handoff?.mayChangePointWithoutNewObservations){risk.push("A scheduled model change can move the estimate without a measured PM change")}
     const refresh=pf.freshnessAdjustment||{};
-    if(refresh.applied){risk.push("Recent-sensor correction "+(refresh.amountUgM3>=0?"+":"")+f(refresh.amountUgM3)+" µg/m³; updates the level after a change, not advance detection")}
-    const rainInput=pf.rainContext||{};
+    if(refresh.applied&&refresh.appliedToSelectedPoint){risk.push("Recent-sensor correction "+(refresh.amountUgM3>=0?"+":"")+f(refresh.amountUgM3)+" µg/m³; updates the level after a change, not advance detection")}
+    if(rainScenario){risk.push("Forecast rain "+(priorRainMm>0?f(priorRainMm,1)+" mm before and ":"")+f(duringRainMm,1)+" mm during this session (mean hourly rain chance "+f(duringRainChance,0)+"%); the published PM baseline has no validated rain adjustment.")}
+    if(rainAhead&&selectedExperimental){risk.push("Forecast rain "+f(duringRainMm,1)+" mm during this session (mean hourly rain chance "+f(duringRainChance,0)+"%). Modeled rain amount is one input; the local PM response is unvalidated.")}
     const weatherEpoch=rainInput.fetchedEpoch;
-    if(weatherEpoch){risk.push("Weather input "+new Date(weatherEpoch*1000).toLocaleTimeString([], {timeZone:"Asia/Kuala_Lumpur",hour:"2-digit",minute:"2-digit",hour12:false})+" · aligned with this PM calculation")}
+    if(weatherEpoch&&!referenceOnly){risk.push("Weather input "+new Date(weatherEpoch*1000).toLocaleTimeString([], {timeZone:"Asia/Kuala_Lumpur",hour:"2-digit",minute:"2-digit",hour12:false})+" · aligned with this PM calculation")}
+    if(weatherEpoch&&rainScenario){risk.push("Rain forecast retrieved "+new Date(weatherEpoch*1000).toLocaleTimeString([], {timeZone:"Asia/Kuala_Lumpur",hour:"2-digit",minute:"2-digit",hour12:false})+"; not used to change the PM baseline.")}
     if(pf.rainLearning?.trialAvailable){risk.push("Rain timing/clearing model is being tested separately; no demonstrated accuracy gain yet.")}
     const error=pf.modelEvidence||{};
-    if(error.mae!=null){risk.push("Historical replay average error "+f(error.mae,1)+" µg/m³ vs persistence "+f(error.persistenceMae,1)+" · "+Number(error.count||0)+" forecasts across "+Number(error.distinctDays||0)+" days")}
+    if(error.mae!=null){risk.push("Archived same-clock adaptive candidate error "+f(error.mae,1)+" µg/m³ vs paired persistence "+f(error.persistenceMae,1)+" · "+Number(error.count||0)+" completed forecasts across "+Number(error.distinctDays||0)+" days")}
+    else{risk.push("Same-clock issued model accuracy is collecting; performance checks do not change the displayed model output.")}
+    if(referenceOnly&&pf.candidateForecast?.mean!=null){risk.push("Unpromoted adaptive candidate "+f(pf.candidateForecast.mean,1)+" µg/m³; no demonstrated same-clock advantage.")}
     const recent=error.recentCompleted72Hours||{};
-    if(recent.mae!=null){risk.push("Latest 72 h completed targets: error "+f(recent.mae,1)+" vs persistence "+f(recent.persistenceMae,1)+" µg/m³ ("+recent.count+" overlapping forecasts)")}
-    if(pf.rawRangeLow!=null&&pf.rawRangeHigh!=null){risk.push("Historical forecast-error span "+f(pf.rawRangeLow,0)+"–"+f(pf.rawRangeHigh,0)+" µg/m³ · uncalibrated, not within-session min/max")}
+    if(recent.mae!=null){risk.push("Latest 72 h same-clock issued candidate error "+f(recent.mae,1)+" vs persistence "+f(recent.persistenceMae,1)+" µg/m³ ("+recent.count+" completed forecasts)")}
+    if(pf.rawRangeLow!=null&&pf.rawRangeHigh!=null){risk.push("Same-clock issued forecast-error span "+f(pf.rawRangeLow,0)+"–"+f(pf.rawRangeHigh,0)+" µg/m³ · uncalibrated, not within-session min/max")}
     if(pf.modelNote){risk.push(pf.modelNote)}
     $(prefix+"RiskDetails").hidden=!risk.length&&!trialText;
-    $(prefix+"Risk").textContent=risk.join(" · ");
+    $(prefix+"Risk").textContent=modelDisplayText(risk.join(" · "));
     if(wf.available){
       $(prefix+"Heat").textContent="Feels like "+f(wf.apparentTemperatureMax,0)+" °C · "+(wf.skyLabel||"Sky unavailable");
       const wind=wf.windSpeed10mMean==null?"wind —":"wind "+f(wf.windSpeed10mMean)+" km/h";
       const direction=wf.windDirection10mCompass?" "+wf.windDirection10mCompass:"";
       const gust=wf.windGust10mMax==null?"":" · gusts "+f(wf.windGust10mMax)+" km/h";
-      const rain=wf.precipitationProbabilityMax==null?"rain —":"rain "+f(wf.precipitationProbabilityMax,0)+"%";
+      const rain=wf.precipitationProbabilityMax==null?"rain —":"peak hourly rain chance "+f(wf.precipitationProbabilityMax,0)+"%";
       const amount=wf.precipitationMm==null||Number(wf.precipitationMm)<=0
         ? ""
         : " · "+f(wf.precipitationMm)+" mm";
@@ -835,7 +1004,7 @@ function renderAnalysis(a){
       $(prefix+"Heat").textContent="Forecast unavailable";
       $(prefix+"WeatherDetail").textContent="No modeled weather values for this session";
     }
-    $(prefix+"Confidence").textContent=pf.confidence||"Low confidence";
+    $(prefix+"Confidence").textContent=modelDisplayText(pf.confidence||"Low confidence");
     $(prefix+"Recheck").textContent=w.forecastedLabel||"Forecasted at —";
   }
   if(hasWindowOutlook){
@@ -844,8 +1013,8 @@ function renderAnalysis(a){
   }
   const provenance=a.rideForecast?.sourceStatus||{};
   const localTime=value=>value?new Date(value).toLocaleString([], {timeZone:"Asia/Kuala_Lumpur"}):"unavailable";
-  $("regionalModelProvenance").textContent="Local sensor history and archived model forecasts are evaluated without future observations. Weather is secondary; no wind-direction or seasonal PM penalty is applied.";
-  $("windowModelValidation").textContent=a.windowPrediction?.note||"Experimental local PM estimates; model checks are specific to the session lead time.";
+  $("regionalModelProvenance").textContent="Session forecasts use recent sensor history and issued weather. The model selected for each exact dated card is shown above.";
+  $("windowModelValidation").textContent=modelDisplayText(a.windowPrediction?.note||"Local PM model outputs; accuracy checks are specific to the session lead time.");
 
   const shower=a.showerSignal||{};
   const showWeatherEvent=(shower.active||shower.state==="recent")
@@ -887,12 +1056,35 @@ function renderAnalysis(a){
   const camsStatus=a.rideForecast?.sourceStatus||{};
   const camsText=" · CAMS ride windows "+Number(camsEvidence.scoredWindowCount||0)+"/"+Number(camsEvidence.minimumScoredWindows||60);
   const camsAge=camsStatus.ageMinutes==null?"":" · CAMS "+camsStatus.ageMinutes+" min old";
-  const camsIssue=camsStatus.error?" · CAMS unavailable":"";
-  $("weatherProvenance").textContent="Open-Meteo hourly weather and Copernicus Atmosphere Monitoring Service (CAMS) Global particles"+modelAge+camsAge+camsIssue+camsText+stationText+checkText+". Source ages are as of forecast issue. Subang validates conditions; it is not a forecast.";
+  const camsIssue=!camsStatus.available?" · CAMS unavailable"
+    : camsStatus.stale?" · CAMS stale"+(camsStatus.error?" (refresh failed)":"")
+    : camsStatus.error?" · CAMS refresh failed; cached run available":"";
+  $("weatherProvenance").textContent=modelDisplayText("Open-Meteo hourly weather and Copernicus Atmosphere Monitoring Service (CAMS) Global particles"+modelAge+camsAge+camsIssue+camsText+stationText+checkText+". Source ages are as of forecast issue. Subang validates conditions; it is not a forecast.");
   const transport=weather.transport||{};
-  $("transportStatus").textContent=(transport.label||"Regional haze transport collecting")+". "+(transport.reason||"");
+  $("transportStatus").textContent=modelDisplayText((transport.label||"Regional haze transport collecting")+". "+(transport.reason||""));
 
   const aw=a.airWindow||{};
+  renderCyclingWindowForecast(aw.cyclingWindowForecast,aw.forecastClock?.forecastIssuedEpoch);
+  const rapidRisk=aw.experimentalRapidChangeRisk||{};
+  const trailRisk=rapidRisk.targets?.mean90to210||{};
+  $("trailRapidChangeRisk").textContent=rapidChangeRiskText(rapidRisk,trailRisk);
+  $("rapidChangeProvenance").textContent=rapidRisk.available
+    ? "Rapid-change probability: "+(rapidRisk.modelVersion||"local model")+
+      (rapidRisk.sourceIssueEpoch?" · issued "+klClock(rapidRisk.sourceIssueEpoch):"")+
+      (rapidRisk.featureAnchorEpoch?" · sensor feature anchor "+klClock(rapidRisk.featureAnchorEpoch):"")+
+      (rapidRisk.trainedThroughIssueDay?" · trained through "+rapidRisk.trainedThroughIssueDay:"")+
+      ". An elevated label means the model probability met the preset "+f(Number(rapidRisk.probabilityThreshold)*100,0)+"% flag threshold. The model estimates absolute changes, not their direction; it does not alter the PM2.5 forecasts or empirical ranges. It has no prospective validation."
+    : "Rapid-change probability unavailable; PM2.5 point forecasts and model ranges are separate.";
+  const shortChange=aw.shortHorizonChange||{};
+  const shortText=[15,30].map(minutes=>{
+    const target=shortChange.targets?.["minutes"+minutes]||{};
+    return target.available
+      ? "+"+minutes+" min: fall ≥10 "+f(Number(target.fallProbability)*100,1)+"%, rise ≥10 "+f(Number(target.riseProbability)*100,1)+"%"
+      : "+"+minutes+" min unavailable";
+  });
+  $("shortHorizonProvenance").textContent=shortChange.available
+    ? "Change check · "+shortText.join(" · ")+". These probabilities do not change the PM2.5 points. A ≥20 µg/m³ event probability is unavailable because examples are scarce."
+    : "15/30-minute change check unavailable"+(shortChange.reason?" ("+String(shortChange.reason).replaceAll("_"," ")+")":"")+"; PM2.5 points are separate.";
   const gap=(a.dataCoverage?.recentGaps||[]).at(-1);
   $("collectionCoverage").textContent=gap
     ? "Last collection gap: "+new Date(gap.startEpoch*1000).toLocaleString([], {timeZone:"Asia/Kuala_Lumpur",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})+"–"+new Date(gap.endEpoch*1000).toLocaleTimeString([], {timeZone:"Asia/Kuala_Lumpur",hour:"2-digit",minute:"2-digit"})+" · "+f(gap.durationMinutes,0)+" min"+(gap.cause==="laptop_sleep_user_confirmed"?" · laptop asleep":"")+" · not filled"
@@ -904,22 +1096,26 @@ function renderAnalysis(a){
   const checks=[];
   if(replay.testOriginCount){
     checks.push("Near-term candidate replay: "+replay.testOriginCount+" overlapping origins across "+replay.distinctDays+" days.");
-    checks.push("+90 min average error "+f(replay.arrivalMae)+" vs closed-15-min reference "+f(replay.arrivalPersistenceMae)+" µg/m³; "+(skill.arrival?.eligible?"candidate eligible.":"candidate not applied."));
-    checks.push("+90–210 min mean average error "+f(replay.trailMeanMae)+" vs closed-15-min reference "+f(replay.trailMeanPersistenceMae)+" µg/m³; "+(skill.trailMean?.eligible?"candidate eligible.":"candidate not applied."));
+    checks.push("Raw +90 min model average error "+f(replay.rawAnalogueArrivalMae)+" vs closed-15-min reference "+f(replay.arrivalPersistenceMae)+" µg/m³.");
+    checks.push("Raw +90–210 min mean model average error "+f(replay.rawRidgeTrailMeanMae)+" vs closed-15-min reference "+f(replay.trailMeanPersistenceMae)+" µg/m³. Performance is reported separately from the model output.");
   }
   checks.push(issuedCheck.scoredCount
-    ? "Separate issued mean-model check: "+issuedCheck.scoredCount+" forecasts across "+issuedCheck.distinctDays+
+    ? "Previous weighted mean-model issued check: "+issuedCheck.scoredCount+" forecasts across "+issuedCheck.distinctDays+
       " days ("+issuedCheck.independentOriginCount+" separated windows). Average error "+f(issuedMetrics.mae)+
       " vs persistence "+f(issuedMetrics.persistenceMae)+" µg/m³. "+
-      (issuedCheck.eligible?"Issued-outcome checks passed.":"Still under evaluation.")
+      "This scores the previous weighted output, not the raw model value displayed now."
     : "Awaiting completed issued forecasts for the mean-model check.");
   $("localModelValidation").textContent=a.delivery?.diagnostics==="pending"
     ? "Additional model checks are updating."
     : a.delivery?.diagnostics==="error"?"Additional model checks are currently unavailable.":checks.join(" ");
+  if(a.freshSensorForecast?.modelVersion){
+    $("localModelValidation").textContent=a.freshSensorForecast.performanceEvidence?.summary
+      ||a.freshSensorForecast.training?.performanceEvidence?.summary
+      ||"Fresh sensor sequence model. Completed issued forecasts are being collected for accuracy checks.";
+  }
   if(!storedHistoryLoaded)showStoredHistory(a.historyHours);
   const arrival=aw.arrival||{};
   const trail=aw.trail||{};
-  const arrivalEvent=arrival.pointRole==="aggressive_rapid_clearance_event";
   const trailEvent=trail.pointRole==="aggressive_rapid_clearance_event";
   const mix=aw.particleMix||{};
   const mixSignal=$("particleMixSignal");
@@ -929,65 +1125,25 @@ function renderAnalysis(a){
       ? mix.label+(mix.details?" · "+mix.details:"")
       : "";
   }
-  const arrivalRain=Boolean(arrival.rainModel?.applied);
-  const arrivalAggressive=String(arrival.forecastState||"").startsWith("aggressive_")||arrivalRain;
-  $("arrivalValue").textContent=arrival.available?(arrivalAggressive?"≈":"")+f(arrival.point):"—";
-  const observed=aw.observedMovement||{};
-  if(currentIsFresh)$("particleLoad").textContent=observed.eventLabel
-    ? "Observed: "+observed.eventLabel : "Raw sensor concentration";
-  $("nowcastSignal").textContent=arrival.headline||"Collecting PM2.5 forecast…";
-  if(arrival.available){
-    $("arrivalBand").textContent=arrivalRain
-      ? "Rain-aware model · empirical q10–q90 span "+f(arrival.rawRangeLow)+"–"+f(arrival.rawRangeHigh)+" · uncalibrated"
-      : arrivalAggressive
-      ? (arrivalEvent
-          ? "Live anchor "+f(arrival.baselinePoint)+" · "+Number(arrival.rapidEventSupport?.completedEventCount||0)+" completed clearing events · envelope "+f(arrival.rangeLow)+"–"+f(arrival.rangeHigh)+" · experimental"
-          : (arrival.persistenceAnchorRole==="latest_closed_15_minute_bucket_median"?"Closed 15-min reference ":"Current reference ")+f(arrival.baselinePoint)+" · empirical q10–q90 span "+f(arrival.rawRangeLow)+"–"+f(arrival.rawRangeHigh)+" · experimental")
-      : (arrival.persistenceAnchorRole==="latest_closed_15_minute_bucket_median"
-          ? "Last complete 15-min median"
-          : "Recent 5-min sensor median")+" · empirical q10–q90 span "+f(arrival.rawRangeLow)+"–"+f(arrival.rawRangeHigh)+" · uncalibrated";
-  }else{
-    $("arrivalBand").textContent=arrival.headline||"History band collecting…";
-  }
+  $("arrivalTitle").textContent="PM2.5 forecast · +90 min";
+  $("arrivalValue").textContent=arrival.available&&arrival.point!=null&&Number.isFinite(Number(arrival.point))
+    ? f(Number(arrival.point)):"—";
+  updateCurrentObservation(a);
   const clock=aw.forecastClock||{};
-  if(clock.forecastIssuedEpoch){
-    $("arrivalBand").textContent+=" · Forecasted "+klClock(clock.forecastIssuedEpoch)+" for "+klClock(clock.arrivalTargetEpoch);
-  }
-  const trailMeanExperimental=Boolean(
-    trailEvent||trail.meanSkillEligible||
-    (trail.pointApproximate&&trail.pointRole!=="persistence_anchor")
-  );
-  const trailPeakExperimental=Boolean(
-    trailEvent||trail.peakSkillEligible||trail.peakApproximate
-  );
-  const trailEnvelopeLow=Number(trail.rawRangeLow);
-  const trailEnvelopeHigh=Number(trail.rawRangeHigh);
-  const trailEnvelopeAvailable=trail.available&&trail.rawRangeLow!=null&&trail.rawRangeHigh!=null&&Number.isFinite(trailEnvelopeLow)&&Number.isFinite(trailEnvelopeHigh);
-  $("trailMean").textContent=trailEnvelopeAvailable
-    ? f(trailEnvelopeLow)+"–"+f(trailEnvelopeHigh)
-    : trail.available?f(trail.point):"—";
+  renderArrivalChangeForecast(aw.arrivalChangeForecast,Number(clock.forecastIssuedEpoch||0),arrival);
+  const extrema=trail.rideExtrema||{};
+  const rideLow=Number(extrema.low),rideHigh=Number(extrema.high);
+  const rideRangeAvailable=extrema.available===true&&extrema.low!=null&&extrema.high!=null&&Number.isFinite(rideLow)&&Number.isFinite(rideHigh);
+  $("trailMean").textContent=rideRangeAvailable
+    ? f(rideLow)+"–"+f(rideHigh)
+    : "—";
   const trailSignal=$("trailSignal");
-  if(!trail.available){
-    trailSignal.hidden=false;
-    trailSignal.textContent=trail.headline||"Collecting trail outlook…";
-  }else if(trailMeanExperimental&&trailPeakExperimental){
-    trailSignal.hidden=false;
-    trailSignal.textContent="Experimental mean ≈"+f(trail.point)+" · peak ≈"+f(trail.projectedPeak)+" µg/m³";
-  }else if(trailMeanExperimental){
-    trailSignal.hidden=false;
-    trailSignal.textContent="Experimental mean ≈"+f(trail.point)+" µg/m³";
-  }else{
-    trailSignal.hidden=true;
-    trailSignal.textContent="";
-  }
-  if(trail.available){
-    const experimentalPeakText=trailPeakExperimental
-      ? " · experimental peak ≈"+f(trail.projectedPeak)+" µg/m³"
-      : "";
-    $("trailBand").textContent=(trail.rainModel?.applied?"Rain-aware model · ":"")+"Empirical q10–q90 for the window mean · uncalibrated"+
-      experimentalPeakText+(trail.rawPeakUpper90==null?"":" · window-peak q90 "+f(trail.rawPeakUpper90)+" µg/m³");
-  }else{
-    $("trailBand").textContent=trail.confidence||"History collecting";
+  trailSignal.hidden=rideRangeAvailable;
+  trailSignal.textContent=rideRangeAvailable?"":"Lowest–highest model output unavailable";
+  $("trailBand").textContent=(trail.available?"Two-hour mean "+f(trail.point)+" µg/m³. ":"")+
+    (rideRangeAvailable?"The range predicts the lowest and highest complete 15-minute PM2.5 medians overlapping this ride window. Partial edge buckets may extend outside the window; brief spikes can differ. Accuracy checks are collecting.":"The minimum/maximum model did not produce an output for this issue.");
+  if(extrema.crossing===true){
+    $("trailBand").textContent+=" The raw minimum and maximum outputs disagree on ordering.";
   }
   if(clock.forecastIssuedEpoch){
     $("trailBand").textContent+=" · "+klClock(clock.windowStartEpoch)+"–"+klClock(clock.windowEndEpoch);
@@ -1130,6 +1286,11 @@ def db():
     try:
         yield conn
         conn.commit()
+        if conn.total_changes:
+            # A second ledger write certifies that the receipt transaction was
+            # already committed before this conservative availability clock.
+            observation_provenance.confirm_receipts_visible(conn)
+            conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -1226,6 +1387,14 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_local_pm_issue "
             "ON local_pm_forecast_issues(issued_epoch)"
         )
+        conn.execute("""CREATE TABLE IF NOT EXISTS dashboard_forecast_issues(
+            issue_id TEXT PRIMARY KEY, issued_epoch INTEGER NOT NULL,
+            forecast_epoch INTEGER NOT NULL, sensor_epoch INTEGER,
+            dashboard_build TEXT NOT NULL, payload TEXT NOT NULL)""")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS dashboard_forecast_issues_issued_epoch "
+            "ON dashboard_forecast_issues(issued_epoch)"
+        )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_subang_report ON subang_observations(report_epoch)"
         )
@@ -1233,6 +1402,8 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_subang_first_fetched "
             "ON subang_observations(first_fetched_epoch)"
         )
+        observation_provenance.init_schema(conn)
+        prospective_validation.init_schema(conn)
         conn.commit()
 
 
@@ -1253,7 +1424,7 @@ def parse_timestamp(value):
         return int(time.time()), iso_now()
 
 
-def save_reading(data):
+def save_reading(data, received_epoch=None):
     # Observation time must come from the sensor, including after host resume.
     # An invalid timestamp must never turn an old response into a fresh sample.
     try:
@@ -1263,7 +1434,8 @@ def save_reading(data):
         epoch = int(observed.timestamp())
     except (ValueError, TypeError, OverflowError) as error:
         raise ValueError("AirGradient returned a missing or invalid sensor timestamp") from error
-    fetched_epoch = int(time.time())
+    received_epoch = time.time() if received_epoch is None else float(received_epoch)
+    fetched_epoch = int(received_epoch)
     if epoch > fetched_epoch + 60:
         raise ValueError("AirGradient sensor timestamp is more than 60 seconds in the future")
     timestamp = observed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -1273,6 +1445,8 @@ def save_reading(data):
     cols = ",".join(["epoch", "timestamp"] + FIELDS)
 
     with db() as conn:
+        observation_provenance.record_sensor_receipt(
+            conn, {"epoch": epoch, "timestamp": timestamp, **dict(zip(FIELDS, vals))}, received_epoch)
         previous_epoch = conn.execute("SELECT MAX(epoch) FROM readings").fetchone()[0]
         conn.execute(
             f"INSERT OR REPLACE INTO readings({cols}) VALUES({placeholders})",
@@ -1302,10 +1476,11 @@ def fetch_reading():
         })
         with urlopen(req, timeout=20) as r:
             raw = r.read()
+        received_epoch = time.time()
         data = json.loads(raw.decode("utf-8"))
         if not isinstance(data, dict):
             raise ValueError("AirGradient returned unexpected JSON")
-        observation = save_reading(data)
+        observation = save_reading(data, received_epoch=received_epoch)
 
         with status_lock:
             collector_status["last_success"] = iso_now()
@@ -1387,12 +1562,16 @@ def save_weather_forecast(payload):
         point for point in payload.get("hourly", [])
         if point["epoch"] >= fetched_epoch - 4 * 3600
     ]
+    archive_json = json.dumps(archived, separators=(",", ":"), allow_nan=False)
     with db() as conn:
+        observation_provenance.record_source_receipt(
+            conn, "weather_forecast_runs", archive_json, fetched_epoch,
+            payload.get("receivedEpoch", time.time()))
         conn.execute(
             "INSERT OR REPLACE INTO weather_forecast_runs"
             "(fetched_epoch,fetched_timestamp,source,payload) VALUES(?,?,?,?)",
             (fetched_epoch, payload["fetchedTimestamp"], payload["source"],
-             json.dumps(archived, separators=(",", ":"))),
+             archive_json),
         )
         cutoff = int(time.time()) - RETENTION_DAYS * 86400
         conn.execute("DELETE FROM weather_forecast_runs WHERE fetched_epoch < ?", (cutoff,))
@@ -1408,7 +1587,7 @@ def fetch_weather_forecast():
             "cloud_cover", "pressure_msl", "wind_speed_10m",
             "wind_direction_10m", "wind_gusts_10m",
             "wind_speed_180m", "wind_direction_180m",
-            "boundary_layer_height", "wind_speed_925hPa", "wind_direction_925hPa",
+            "boundary_layer_height", "wind_speed_925hPa", "wind_direction_925hPa", "cape",
         ]
         params = {
             "latitude": WEATHER_LATITUDE,
@@ -1419,6 +1598,7 @@ def fetch_weather_forecast():
             "forecast_hours": WEATHER_FORECAST_HOURS,
         }
         raw = fetch_json(WEATHER_API_URL + "?" + urlencode(params))
+        received_epoch = time.time()
         hourly = raw.get("hourly", {})
         times = hourly.get("time", [])
         if not times:
@@ -1435,6 +1615,7 @@ def fetch_weather_forecast():
         fetched_epoch = int(time.time())
         payload = {
             "fetchedEpoch": fetched_epoch,
+            "receivedEpoch": received_epoch,
             "fetchedTimestamp": iso_now(),
             "source": "Open-Meteo Best Match",
             "latitude": num(raw.get("latitude")),
@@ -1463,21 +1644,28 @@ def fetch_weather_forecast():
 
 
 def save_air_quality_forecast(payload):
-    """Archive only forecast-time CAMS points for prospective skill checks."""
+    """Archive issued CAMS points plus the context needed for interpolation."""
     fetched_epoch = int(payload["fetchedEpoch"])
     archived = dict(payload)
+    archived["archiveContextHours"] = 2
     archived["hourly"] = [
         point for point in payload.get("hourly", [])
-        if int(point["epoch"]) >= fetched_epoch - 3600
+        # A just-fetched hourly run must retain both hours bracketing the
+        # latest closed sensor bucket centre (which can predate the fetch).
+        if int(point["epoch"]) >= fetched_epoch - 2 * 3600
     ]
+    archive_json = json.dumps(archived, separators=(",", ":"), allow_nan=False)
     with db() as conn:
+        observation_provenance.record_source_receipt(
+            conn, "air_quality_forecast_runs", archive_json, fetched_epoch,
+            payload.get("receivedEpoch", time.time()))
         conn.execute(
             "INSERT OR REPLACE INTO air_quality_forecast_runs"
             "(fetched_epoch,fetched_timestamp,source,model_version,payload) "
             "VALUES(?,?,?,?,?)",
             (fetched_epoch, payload["fetchedTimestamp"], payload["source"],
              AIR_QUALITY_MODEL_VERSION,
-             json.dumps(archived, separators=(",", ":"))),
+             archive_json),
         )
         cutoff = int(time.time()) - RETENTION_DAYS * 86400
         conn.execute(
@@ -1501,10 +1689,15 @@ def fetch_air_quality_forecast():
             "forecast_hours": AIR_QUALITY_FORECAST_HOURS,
         }
         raw = fetch_json(AIR_QUALITY_API_URL + "?" + urlencode(params))
+        received_epoch = time.time()
         hourly = raw.get("hourly", {})
         times = hourly.get("time", [])
         if not times:
             raise ValueError("Open-Meteo returned no CAMS particle forecast")
+        unit = (str((raw.get("hourly_units") or {}).get("pm2_5", ""))
+                .replace("μ", "u").replace("µ", "u").replace("³", "3"))
+        if unit != "ug/m3":
+            raise ValueError("Open-Meteo CAMS PM2.5 has missing or unexpected units")
 
         points = []
         for index, valid_time in enumerate(times):
@@ -1515,8 +1708,17 @@ def fetch_air_quality_forecast():
             points.append(point)
 
         fetched_epoch = int(time.time())
+        finite_pm_times = [int(point["epoch"]) for point in points
+                           if point["pm2_5"] is not None
+                           and math.isfinite(point["pm2_5"])]
+        if (not any(fetched_epoch - 7200 <= epoch <= fetched_epoch
+                    for epoch in finite_pm_times)
+                or not any(fetched_epoch <= epoch <= fetched_epoch + 10800
+                           for epoch in finite_pm_times)):
+            raise ValueError("Open-Meteo CAMS PM2.5 lacks recent or future coverage")
         payload = {
             "fetchedEpoch": fetched_epoch,
+            "receivedEpoch": received_epoch,
             "fetchedTimestamp": iso_now(),
             "source": "Open-Meteo / CAMS Global",
             "domain": "cams_global",
@@ -1727,25 +1929,16 @@ def weather_collector():
 def latest_weather_payload(as_of_epoch=None):
     with weather_lock:
         payload = weather_status.get("forecast")
-    if payload and (
-            as_of_epoch is None
-            or int(payload.get("fetchedEpoch") or 0) <= int(as_of_epoch)):
+    if payload and as_of_epoch is None:
         return payload
+    cutoff = int(time.time()) if as_of_epoch is None else int(as_of_epoch)
     with db() as conn:
-        if as_of_epoch is None:
-            row = conn.execute(
-                "SELECT payload FROM weather_forecast_runs "
-                "ORDER BY fetched_epoch DESC LIMIT 1"
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT payload FROM weather_forecast_runs WHERE fetched_epoch<=? "
-                "ORDER BY fetched_epoch DESC LIMIT 1", (int(as_of_epoch),)
-            ).fetchone()
-    if not row:
+        runs = observation_provenance.compatible_source_runs(
+            conn, "weather_forecast_runs", cutoff, max(0, cutoff-48*3600))
+    if not runs:
         return None
     try:
-        return json.loads(row["payload"])
+        return {**json.loads(runs[-1]["payload"]), "inputReceiptProvenance": runs[-1]["_provenance"]}
     except (TypeError, json.JSONDecodeError):
         return None
 
@@ -1753,30 +1946,17 @@ def latest_weather_payload(as_of_epoch=None):
 def latest_air_quality_payload(as_of_epoch=None):
     with weather_lock:
         payload = weather_status.get("air_quality")
-    if payload and (
-            as_of_epoch is None
-            or int(payload.get("fetchedEpoch") or 0) <= int(as_of_epoch)):
+    if payload and as_of_epoch is None:
         return payload
+    cutoff = int(time.time()) if as_of_epoch is None else int(as_of_epoch)
     with db() as conn:
-        compatible_slots = ",".join("?" for _ in AIR_QUALITY_COMPATIBLE_ARCHIVES)
-        if as_of_epoch is None:
-            row = conn.execute(
-                "SELECT payload FROM air_quality_forecast_runs "
-                f"WHERE model_version IN ({compatible_slots}) "
-                "ORDER BY fetched_epoch DESC LIMIT 1",
-                AIR_QUALITY_COMPATIBLE_ARCHIVES,
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT payload FROM air_quality_forecast_runs "
-                f"WHERE model_version IN ({compatible_slots}) AND fetched_epoch<=? "
-                "ORDER BY fetched_epoch DESC LIMIT 1",
-                (*AIR_QUALITY_COMPATIBLE_ARCHIVES, int(as_of_epoch)),
-            ).fetchone()
-    if not row:
+        runs = observation_provenance.compatible_source_runs(
+            conn, "air_quality_forecast_runs", cutoff, max(0, cutoff-48*3600))
+        runs = [run for run in runs if run.get("model_version") in AIR_QUALITY_COMPATIBLE_ARCHIVES]
+    if not runs:
         return None
     try:
-        return json.loads(row["payload"])
+        return {**json.loads(runs[-1]["payload"]), "inputReceiptProvenance": runs[-1]["_provenance"]}
     except (TypeError, json.JSONDecodeError):
         return None
 
@@ -3215,14 +3395,13 @@ def retrospective_air_quality_diagnostic(rows, payload):
 
 
 def summarize_weather_range(payload, start_epoch, end_epoch, evidence):
+    original_payload = payload
+    payload = weather_contracts.sanitize_for_legacy_summary(payload)
     # Instantaneous fields use [start,end); hourly precipitation and its
     # probability describe the preceding hour.  Include every preceding-hour
     # interval that overlaps a shifted session and prorate accumulation at the
     # two edges; probability remains the maximum of all overlapping hours.
-    instant_points = [
-        point for point in (payload or {}).get("hourly", [])
-        if start_epoch <= int(point["epoch"]) < end_epoch
-    ]
+    instant_points = weather_contracts.instantaneous_points(payload, start_epoch, end_epoch)
     accumulation_intervals = []
     for point in (payload or {}).get("hourly", []):
         point_end = int(point["epoch"])
@@ -3234,7 +3413,7 @@ def summarize_weather_range(payload, start_epoch, end_epoch, evidence):
             accumulation_intervals.append((point, overlap_seconds / 3600.0))
     accumulation_points = [point for point, _ in accumulation_intervals]
     if not instant_points and not accumulation_points:
-        return {"available": False}
+        return weather_contracts.guard_summary({"available": False}, original_payload, start_epoch, end_epoch)
 
     def values(key, points=None):
         source = instant_points if points is None else points
@@ -3321,7 +3500,7 @@ def summarize_weather_range(payload, start_epoch, end_epoch, evidence):
     else:
         rain_label = "Lower modeled rain chance"
 
-    return {
+    return weather_contracts.guard_summary({
         "available": True,
         "startEpoch": int(start_epoch),
         "endEpoch": int(end_epoch),
@@ -3357,11 +3536,11 @@ def summarize_weather_range(payload, start_epoch, end_epoch, evidence):
         "ventilationUsed": bool(evidence.get("supported")),
         "rainLabel": rain_label,
         "pmForecastAdjustment": 0.0,
-    }
+    }, original_payload, start_epoch, end_epoch)
 
 
 def next_feasible_ride_period(latest_epoch, config):
-    """Return the next comparable 120-minute session reachable in a ride window."""
+    """Keep the evaluated 09–11 / 14–16 target and the 90-minute ride lead."""
     now_local = datetime.fromtimestamp(latest_epoch, KL_TZ)
     for day_offset in range(4):
         day = (now_local + timedelta(days=day_offset)).date()
@@ -3371,13 +3550,9 @@ def next_feasible_ride_period(latest_epoch, config):
         window_end = datetime(
             day.year, day.month, day.day, config["end"], tzinfo=KL_TZ
         )
-        earliest = max(
-            window_start, now_local + timedelta(minutes=ARRIVAL_MINUTES)
-        )
-        session_epoch = math.ceil(earliest.timestamp() / 900) * 900
-        session_start = datetime.fromtimestamp(session_epoch, KL_TZ)
+        session_start = window_start
         session_end = session_start + timedelta(minutes=TRAIL_MINUTES)
-        if session_end > window_end:
+        if session_start < now_local + timedelta(minutes=ARRIVAL_MINUTES) or session_end > window_end:
             continue
         decision = session_start - timedelta(minutes=ARRIVAL_MINUTES)
         return (
@@ -3393,16 +3568,15 @@ def next_ride_window(latest_epoch, config, payload, evidence):
         result = summarize_weather_range(
             payload, int(session_start.timestamp()), int(session_end.timestamp()), evidence
         )
-        if result.get("available"):
-            result.update({
+        result.update({
                 "date": day.isoformat(),
                 "label": config["label"],
                 "window": f'{config["start"]:02d}:00–{config["end"]:02d}:00',
                 "modeledSession": (
                     f'{session_start:%H:%M}–{session_end:%H:%M}'
                 ),
-            })
-            return result
+        })
+        return result
     return {"available": False}
 
 
@@ -5218,6 +5392,14 @@ def shadow_analogue_outlook(frame, issue_epoch=None):
         "status": "replay_screened_experimental" if current_prediction else "collecting",
         "forecastClock": clock.metadata(),
     }
+    try:
+        base["trailExtrema"] = ride_pm_extrema.predict_ride_extrema(
+            features, pm, current_time, current_train_end, clock
+        )
+    except Exception as error:
+        base["trailExtrema"] = {"available": False, "low": None, "high": None,
+            "reason": "ride_extrema_calculation_unavailable", "errorType": type(error).__name__,
+            "forecastClock": clock.metadata(), "modelVersion": ride_pm_extrema.MODEL_VERSION}
     if not current_prediction or not current_mean_ridge:
         base["minimumTrainingOrigins"] = SHADOW_ANALOG_MIN_ORIGINS
         return base
@@ -5711,7 +5893,7 @@ def aggressive_air_window_forecast(air_window, analogue, rapid_event=None):
     arrival_delta = num((analogue or {}).get("arrivalDelta"))
     arrival = dict(updated.get("arrival") or {})
     arrival_skill = bool((deployment_skill.get("arrival") or {}).get("eligible"))
-    if arrival_shadow is not None and arrival_skill:
+    if arrival_shadow is not None and arrival_skill and not ARRIVAL_PERSISTENCE_ONLY:
         model_delta = (
             arrival_delta if arrival_delta is not None
             else arrival_shadow - model_anchor
@@ -5909,7 +6091,7 @@ def aggressive_air_window_forecast(air_window, analogue, rapid_event=None):
             "trailMeanScenarioHigh": rapid_event.get("trailMeanScenarioHigh"),
             "trailPeakScenarioHigh": rapid_event.get("trailPeakScenarioHigh"),
         }
-        if event_anchor is not None and event_arrival is not None:
+        if event_anchor is not None and event_arrival is not None and not ARRIVAL_PERSISTENCE_ONLY:
             arrival = dict(updated.get("arrival") or {})
             scenario_low = num(rapid_event.get("arrivalScenarioLow"))
             scenario_high = num(rapid_event.get("arrivalScenarioHigh"))
@@ -6004,7 +6186,7 @@ def aggressive_air_window_forecast(air_window, analogue, rapid_event=None):
     selection = {}
     for target, candidate, delta, weight, route, selected, applied in (
         ("arrival", arrival_shadow, arrival_delta, AGGRESSIVE_ARRIVAL_ANALOGUE_WEIGHT,
-         "arrival", "arrival", bool(arrival_shadow is not None and arrival_skill)),
+         "arrival", "arrival", bool(arrival_shadow is not None and arrival_skill and not ARRIVAL_PERSISTENCE_ONLY)),
         ("trailMean", trail_shadow, trail_delta, AGGRESSIVE_TRAIL_MEAN_RIDGE_WEIGHT,
          "trailMean", "trail", mean_applied),
         ("trailPeak", peak_shadow, peak_delta, AGGRESSIVE_TRAIL_PEAK_ANALOGUE_WEIGHT,
@@ -6032,6 +6214,8 @@ def aggressive_air_window_forecast(air_window, analogue, rapid_event=None):
             blocked.append("deployment_gate_not_evaluated")
         elif gate_outcome == "failed":
             blocked.append("deployment_gate_not_eligible")
+        if target == "arrival" and ARRIVAL_PERSISTENCE_ONLY:
+            blocked.append("user_selected_persistence")
         point_key = "projectedPeak" if target == "trailPeak" else "point"
         selected_value = (updated.get(selected) or {}).get(point_key)
         selected_role = (updated.get(selected) or {}).get("pointRole")
@@ -6050,7 +6234,8 @@ def aggressive_air_window_forecast(air_window, analogue, rapid_event=None):
             "gateEligible": bool(gate.get("eligible")), "gateOutcome": gate_outcome,
             "candidateAvailable": candidate_available, "candidateState": candidate_state,
             "localComponentApplied": applied, "blockedReasons": blocked,
-            "selectionOutcome": ("applied" if applied else "not_evaluated" if not clock_matches else
+            "selectionOutcome": ("retained_persistence_by_user" if target == "arrival" and ARRIVAL_PERSISTENCE_ONLY else
+                                 "applied" if applied else "not_evaluated" if not clock_matches else
                                  "unavailable" if not candidate_available or gate_outcome == "unavailable" else
                                  "failed" if gate_outcome == "failed" else "not_evaluated"),
             "gateChecks": gate.get("gateChecks", {}),
@@ -6108,6 +6293,182 @@ def refresh_near_term_persistence(rows, washout_signal, air_window, issue_epoch)
                 }
             updated[name] = value
     return updated
+
+
+def attach_experimental_rapid_change_risk(air_window, issue_epoch, current):
+    """Add a separate absolute-change probability without moving PM estimates."""
+    clock = (air_window or {}).get("forecastClock") or {}
+    unavailable = {
+        "available": False,
+        "modelVersion": getattr(near_term_hazard, "MODEL_VERSION", None),
+        "experimental": True,
+        "prospectivelyValidated": False,
+        "calibrated": False,
+        "directionAvailable": False,
+        "thresholdUgM3": 20.0,
+        "probabilityThreshold": 0.20,
+        "definition": "P(abs(target PM2.5 − as-issued fresh PM2.5) >= 20 µg/m³)",
+        "sourceIssueEpoch": int(issue_epoch),
+        "featureAnchorEpoch": clock.get("featureAnchorEpoch"),
+        "targets": {
+            "arrival90": {"available": False, "targetEpoch": clock.get("arrivalTargetEpoch")},
+            "mean90to210": {
+                "available": False,
+                "startEpoch": clock.get("windowStartEpoch"),
+                "endEpoch": clock.get("windowEndEpoch"),
+            },
+        },
+    }
+    if not (air_window or {}).get("available"):
+        risk = {**unavailable, "reason": "near_term_forecast_unavailable"}
+    else:
+        try:
+            # The independent model must never mutate the primary estimates.
+            risk = near_term_hazard.predict_hazard(
+                DB_PATH, copy.deepcopy(air_window), int(issue_epoch),
+                current=copy.deepcopy(current),
+            )
+            if not isinstance(risk, dict):
+                risk = {**unavailable, "reason": "invalid_experimental_result"}
+        except Exception as error:
+            print(f"[Rapid change risk] {type(error).__name__}: {error}")
+            risk = {**unavailable, "reason": "calculation_unavailable"}
+    return {**air_window, "experimentalRapidChangeRisk": json_safe(risk)}
+
+
+def attach_experimental_short_horizon_change(air_window, rows, issue_epoch):
+    """Archive a separate 15/30-minute research forecast at this issue clock."""
+    try:
+        candidate = short_horizon_change.predict_short_horizon(
+            DB_PATH, rows, int(issue_epoch)
+        )
+        if not isinstance(candidate, dict):
+            raise ValueError("invalid short-horizon result")
+    except Exception as error:
+        print(f"[Short-horizon change] {type(error).__name__}: {error}")
+        candidate = {
+            "available": False, "modelVersion": short_horizon_change.MODEL_VERSION,
+            "experimental": True, "prospectivelyValidated": False,
+            "calibrated": False, "appliedToPrimaryForecast": False,
+            "sourceIssueEpoch": int(issue_epoch), "targets": {},
+            "reason": "calculation_unavailable",
+        }
+    return {**air_window, "shortHorizonChange": json_safe(candidate)}
+
+
+def attach_first_crossing_event_forecast(air_window, rows, issue_epoch):
+    """Infer the user-selected first-event direction from a background fit.
+
+    The unrounded reference is the same trailing five-minute median used by
+    persistence. This seam never fits, fetches providers or records an issue.
+    """
+    issue = int(issue_epoch)
+    unavailable = {
+        "available": False, "modelVersion": fresh_event_model.MODEL_VERSION,
+        "experimental": True, "calibrated": False,
+        "forecastIssuedEpoch": issue, "validUntilEpoch": issue + 5400,
+        "changeThresholdUgM3": 20, "direction": "unresolved",
+        "directionDecision": "three_class_argmax_ties_unresolved",
+        "reason": "fresh_sensor_reference_unavailable",
+        "displayText": None,
+    }
+    try:
+        origin = issue // 900 * 900
+        references, _, _ = forecast_freshness.references(rows, [origin], issue - origin, issue)
+        if not len(references) or not math.isfinite(float(references[0])):
+            return {**air_window, "firstCrossingEventForecast": unavailable}
+        watermark = max(int(row["epoch"]) for row in rows if row["epoch"] <= issue)
+        candidate = fresh_event_model.predict_event(
+            DB_PATH, rows, issue, watermark, float(references[0])
+        )
+        if not isinstance(candidate, dict):
+            raise ValueError("invalid first-crossing result")
+    except Exception as error:
+        print(f"[First-crossing event] {type(error).__name__}: {error}")
+        candidate = {**unavailable, "reason": "calculation_unavailable"}
+    return {**air_window, "firstCrossingEventForecast": json_safe(momentum_display.attach_display_text(candidate))}
+
+
+def attach_cycling_window_forecast(air_window, rows, issue_epoch):
+    """Infer the user's ride-average planning probability from a cached fit."""
+    issue = int(issue_epoch)
+    unavailable = {
+        "available": False, "modelVersion": cycling_window_live.MODEL_VERSION,
+        "experimental": True, "calibrated": False, "mode": "initial90",
+        "forecastIssuedEpoch": issue, "startEpoch": issue + 5400,
+        "endEpoch": issue + 12600, "cutoffUgM3": 70.0,
+        "chanceMeanAtOrBelowCutoff": None,
+        "reason": "fresh_sensor_reference_unavailable",
+    }
+    try:
+        arrival = air_window.get("arrival") or {}
+        if not arrival.get("available") or not (arrival.get("freshnessAdjustment") or {}).get("applied"):
+            return {**air_window, "cyclingWindowForecast": unavailable}
+        origin = issue // 900 * 900
+        references, _, _ = forecast_freshness.references(rows, [origin], issue - origin, issue)
+        if not len(references) or not math.isfinite(float(references[0])):
+            return {**air_window, "cyclingWindowForecast": unavailable}
+        watermark = max(int(row["epoch"]) for row in rows if row["epoch"] <= issue)
+        candidate = cycling_window_live.predict_window(DB_PATH, rows, issue, watermark, float(references[0]))
+    except Exception as error:
+        print(f"[Cycling window] {type(error).__name__}: {error}")
+        candidate = {**unavailable, "reason": "calculation_unavailable"}
+    return {**air_window, "cyclingWindowForecast": json_safe(candidate)}
+
+
+def cycling_plan_recheck(start_epoch, end_epoch, *, issue_epoch=None):
+    """Read current inputs and reassess an immutable planned two-hour window.
+
+    This function never fits or records a publication. The HTTP handler records
+    a fresh prediction only after successfully delivering it to the requester.
+    """
+    issue = int(time.time()) if issue_epoch is None else int(issue_epoch)
+    invalid = cycling_window_live._window_contract(issue, int(start_epoch), int(end_epoch), "recheck60")
+    if invalid:
+        return {"available": False, "reason": invalid, "mode": "recheck60",
+                "forecastIssuedEpoch": issue, "startEpoch": int(start_epoch), "endEpoch": int(end_epoch),
+                "cutoffUgM3": 70.0, "experimental": True, "calibrated": False}
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT epoch,pm02,atmp,rhum FROM readings WHERE epoch>=? AND epoch<=? ORDER BY epoch",
+            (issue - 4 * 3600, issue),
+        ).fetchall()
+    origin = issue // 900 * 900
+    references, _, _ = forecast_freshness.references(rows, [origin], issue - origin, issue)
+    reference = float(references[0]) if len(references) and math.isfinite(float(references[0])) else None
+    watermark = max((int(row["epoch"]) for row in rows), default=issue)
+    result = cycling_window_live.predict_window(
+        DB_PATH, rows, issue, watermark, reference,
+        start_epoch=int(start_epoch), end_epoch=int(end_epoch), mode="recheck60",
+    )
+    result["current"] = {"epoch": int(rows[-1]["epoch"]), "pm02": rows[-1]["pm02"]} if rows else None
+    return json_safe(result)
+
+
+def cycling_window_json_schema():
+    return {
+        "type": "object", "required": ["available"],
+        "description": "Experimental probability that the exact two-hour ride-window PM2.5 mean is at or below the user's 70 ug/m3 planning cutoff. Initial window starts in90 minutes; a30-minute recheck preserves its absolute start/end. It is a preparation aid, not an automatic cycling clearance.",
+        "properties": {
+            "available": {"type": "boolean"},
+            "modelVersion": {"type": ["string", "null"]},
+            "experimental": {"const": True}, "calibrated": {"const": False},
+            "mode": {"enum": ["initial90", "recheck60"]},
+            "forecastIssuedEpoch": {"type": "integer"},
+            "startEpoch": {"type": "integer"}, "endEpoch": {"type": "integer"},
+            "cutoffUgM3": {"const": 70.0},
+            "referencePm": {"type": ["number", "null"], "minimum": 0},
+            "chanceMeanAtOrBelowCutoff": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+            "reason": {"type": ["string", "null"]},
+            "planId": {"type": "string"},
+            "planIssuedEpoch": {"type": "integer"},
+            "plannedRecheckEpoch": {"type": "integer"},
+        },
+        "allOf": [{"if": {"properties": {"available": {"const": True}}},
+                   "then": {"required": ["forecastIssuedEpoch", "startEpoch", "endEpoch", "mode", "cutoffUgM3", "referencePm", "chanceMeanAtOrBelowCutoff"],
+                            "properties": {"referencePm": {"type": "number", "minimum": 0}, "chanceMeanAtOrBelowCutoff": {"type": "number", "minimum": 0, "maximum": 1}}}}],
+        "additionalProperties": True,
+    }
 
 
 def separate_observation_from_prediction(air_window):
@@ -7485,6 +7846,25 @@ def local_window_pm_comparison(windows, prediction):
         result.update(ready=False, headline="Forecasts refer to different dates",
                       summary="Each card shows its dated PM2.5 estimate; no same-day comparison.")
         return result
+    reference_only = [p[key].get("pointRole") == "persistence_anchor" for key in p]
+    if any(reference_only):
+        result["model"].update({
+            "status": "same_issue_persistence" if all(reference_only) else "mixed_baseline_and_candidate",
+            "displayLabel": "Recent-sensor baseline" if all(reference_only) else "Mixed forecast methods",
+            "modelPointApplied": not all(reference_only),
+        })
+        result["pm"].update({
+            "lowerExperimentalScenarioWindow": None,
+            "differenceMorningMinusAfternoonUgM3": None,
+            "differenceExceedsIndividualMeanErrors": False,
+        })
+        result["headline"] = "No skill-supported session ordering"
+        result["summary"] = (
+            "Both sessions use the same recent-sensor persistence baseline."
+            if all(reference_only) else
+            "One session uses persistence and the other uses a model estimate; their ordering is not validated."
+        )
+        return result
     m, a = float(p["morning"]["point"]), float(p["afternoon"]["point"])
     gap = m-a
     error = [num((p[key].get("modelEvidence") or {}).get("mae")) for key in p]
@@ -7495,16 +7875,19 @@ def local_window_pm_comparison(windows, prediction):
         "lowerExperimentalScenarioWindow": lower,
         "differenceExceedsIndividualMeanErrors": bool(uncertainty and abs(gap) > uncertainty),
     })
+    result["model"]["displayLabel"] = "Experimental session models · user selected"
     result["headline"] = (
-        f'{lower.capitalize()} PM2.5 estimate ≈{abs(gap):.0f} µg/m³ lower'
-        if lower else "Morning and afternoon PM2.5 estimates are similar"
+        f'Experimental model: {lower} PM2.5 ≈{abs(gap):.0f} µg/m³ lower'
+        if lower else "Experimental model: morning and afternoon estimates are similar"
     )
     result["summary"] = (
+        "Afternoon uses an experimental session change model; the session ordering is not validated."
+        if any((value.get("sessionDeltaModel") or {}).get("applied") for value in p.values()) else
         "Afternoon uses an experimental direction model; the session ordering is not validated."
         if any((value.get("directionalModel") or {}).get("applied") for value in p.values()) else
         "The difference is smaller than recent forecast errors; the ordering is uncertain."
         if uncertainty and abs(gap) <= uncertainty else
-        "Experimental concentration estimates, not a validated morning/afternoon ranking."
+        "Experimental concentration estimates selected by request; morning/afternoon ordering is not validated."
     )
     return result
 
@@ -7925,21 +8308,36 @@ def archive_published_analysis(result):
     if not result.get("available"):
         result["computation"]["publishedForecastArchived"] = False
         return
+    staged = copy.deepcopy(result)
     try:
         with db() as conn:
-            record_dashboard_issue(conn, result, DASHBOARD_BUILD, int(time.time()))
+            manifest = staged.pop("_materializedInputManifest", None)
+            if manifest is not None:
+                staged["inputProvenance"] = observation_provenance.record_input_snapshot(conn, manifest)
+                staged["inputProvenance"]["scope"] = "primary_sensor_view_and_patchtst_materialized_sources"
+                staged["inputProvenance"]["completeAllModelInputReplay"] = False
+            prospective_validation.record_issued(
+                conn, staged, build=DASHBOARD_BUILD, actual_issued_epoch=int(time.time()),
+                candidate_versions=ACTIVE_VALIDATION_RECIPES)
+            staged["validationStatus"] = prospective_validation.validation_status(
+                conn, int(time.time()), candidate_versions=ACTIVE_VALIDATION_RECIPES)
+            record_dashboard_issue(conn, staged, DASHBOARD_BUILD, int(time.time()))
+        result.pop("_materializedInputManifest", None)
+        result["inputProvenance"] = staged.get("inputProvenance") or {}
+        result["validationStatus"] = staged["validationStatus"]
         result["computation"]["publishedForecastArchived"] = True
     except (sqlite3.Error, ValueError) as error:
         result["computation"]["publishedForecastArchived"] = False
         print(f"[Forecast archive] {type(error).__name__}: {error}")
+        raise  # Delivery retains the last committed publication, with its original clock.
 
 
 def enrich_analysis_trials(result, days, context):
     """Attach diagnostics after primary publication, at its original cutoff.
 
-    The single producer executes this phase too: legacy model caches are not
-    newly shared across primary/diagnostic threads. A trial keeps its own issue
-    metadata if its existing model cache returns an older issued comparator.
+    The separate diagnostic worker keeps the private sensor snapshot and issue
+    clock. The rejected rain-session fit shares the primary session-model lock,
+    so it is omitted from live enrichment; research replays can still run it.
     """
     if not result.get("available"):
         return result
@@ -7949,46 +8347,48 @@ def enrich_analysis_trials(result, days, context):
     # Retain the original private sensor snapshot: a late backfill/correction
     # must not enter diagnostics claiming the earlier primary issue time.
     rows = context["rows"]
+    # Legacy numerical comparisons remain optional diagnostics; the primary
+    # cached fresh-sequence heads have already been published at this clock.
+    result["shadowForecast"] = dict(cached_shadow_analogue_outlook(rows, issued))
+    result["shadowForecast"]["appliedToPrimaryForecast"] = False
     windows = {key: {field: window.get(field) for field in ("startEpoch", "endEpoch")}
                for key, window in result.get("windows", {}).items()}
     rain = cached_rain_learning("near", rows, {}, issued)
     rain.update({"appliedToPrimaryForecast": False, "status": "evaluation_only",
                  "promotionReason": "fixed_paired_replay_did_not_improve_accuracy"})
-    rain_sessions = cached_rain_learning("sessions", rows, windows, issued)
     correction = cams_local_correction.predict_windows(DB_PATH, rows, windows, issued)
     publication = int(time.time())
     rain_pm_forecast.record_issue(DB_PATH, rain, publication)
-    window_pm_predictor.record_issue(DB_PATH, rain_sessions, publication)
     cams_local_correction.record_issue(DB_PATH, correction, publication)
     enriched = copy.deepcopy(result)
     enriched["rainLearning"] = rain
     for key, window in enriched.get("windows", {}).items():
         particle = window.get("particleForecast") or {}
         trial = correction.get(key) or {}
-        rain_session = rain_sessions.get(key) or {}
         particle["rainLearning"].update({
-            "trialAvailable": bool(rain_session.get("available")),
-            "trialModelVersion": rain_session.get("modelVersion"),
-            "trialMeanPm25UgM3": rain_session.get("mean"),
-            "trialWeatherFetchedEpoch": rain_session.get("weatherFetchedEpoch"),
-            "trialForecastIssuedEpoch": rain_session.get("forecastedAtEpoch"),
+            "trialAvailable": False,
+            "trialModelVersion": None,
+            "trialMeanPm25UgM3": None,
+            "trialWeatherFetchedEpoch": None,
+            "trialForecastIssuedEpoch": None,
         })
         particle["regionalCorrectionTrial"].update({
             "available": bool(trial.get("available")),
+            "status": "available" if trial.get("available") else "unavailable",
             "meanPm25UgM3": trial.get("mean"),
             "regionalCorrection": trial.get("regionalCorrection"),
             "modelEvidence": trial.get("modelEvidence") or {},
             "forecastIssuedAt": iso_from_epoch(trial.get("forecastedAtEpoch")),
             "sensorAnchorAt": iso_from_epoch(trial.get("originEpoch")),
             "regionalDataRetrievedAt": iso_from_epoch(trial.get("camsFetchedEpoch")),
-            "reason": trial.get("reason"),
+            "reason": trial.get("reason") if trial.get("available") else trial.get("reason") or "trial_result_unavailable",
         })
     return enriched
 
 
-def analysis_worker():
-    """One producer, independent of browser count; publish before diagnostics."""
-    while True:
+def analysis_worker(stop_event=None):
+    """Publish primary forecasts; live diagnostic fits are suspended."""
+    while stop_event is None or not stop_event.is_set():
         analysis_delivery.schedule(RIDE_API_ANALYSIS_DAYS)
         days = analysis_delivery.take_job()
         if days is None:
@@ -7997,8 +8397,7 @@ def analysis_worker():
             continue
         try:
             started = time.perf_counter()
-            trial_context = {}
-            result = _compute_analysis(days, include_trials=False, trial_context=trial_context)
+            result = _compute_analysis(days, include_trials=False)
             result["computation"] = {
                 "completedAt": iso_now(),
                 "seconds": round(time.perf_counter()-started, 3),
@@ -8007,17 +8406,41 @@ def analysis_worker():
                 "maximumClockCacheSeconds": 600,
             }
             archive_published_analysis(result)
-            analysis_delivery.publish_primary(days, result)
+            analysis_delivery.publish_primary(days, result, diagnostics="skipped")
             try:
-                diagnostics_started = time.perf_counter()
-                enriched = enrich_analysis_trials(result, days, trial_context)
-                enriched["computation"]["diagnosticsCompletedAt"] = iso_now()
-                enriched["computation"]["diagnosticsSeconds"] = round(time.perf_counter()-diagnostics_started, 3)
-                archive_published_analysis(enriched)
-                analysis_delivery.publish_diagnostics(days, enriched)
+                selected_sessions = (result.get("windowPrediction") or {}).get("predictions") or {}
+                window_pm_predictor.record_issue(DB_PATH, selected_sessions, int(time.time()))
+                weather_session_forecast.record_issue(DB_PATH, selected_sessions, int(time.time()))
+                afternoon_xgboost_forecast.record_issue(
+                    DB_PATH, selected_sessions,
+                    int(time.time()),
+                )
             except Exception as error:
-                analysis_delivery.fail(days, error, diagnostics=True)
-                print(f"[Analysis diagnostics] {type(error).__name__}: {error}")
+                print(f"[Afternoon XGBoost archive] {type(error).__name__}: {error}")
+            # Only the successful live publication boundary creates an issued
+            # event record. Pure replays and HTTP reads never call this writer.
+            event = (result.get("airWindow") or {}).get("firstCrossingEventForecast")
+            if event is not None:
+                try:
+                    fresh_event_model.record_issued_prediction(event, recorded_epoch=int(time.time()),
+                        input_lineage=result.get("inputProvenance"))
+                except Exception as error:
+                    print(f"[First-crossing archive] {type(error).__name__}: {error}")
+            cycling = (result.get("airWindow") or {}).get("cyclingWindowForecast")
+            arrival_change = (result.get("airWindow") or {}).get("arrivalChangeForecast")
+            if arrival_change is not None:
+                try:
+                    arrival_change_model.record_issued_prediction(
+                        arrival_change, recorded_epoch=int(time.time()),
+                        input_lineage=result.get("inputProvenance"),
+                    )
+                except Exception as error:
+                    print(f"[Arrival change archive] {type(error).__name__}: {error}")
+            if cycling is not None:
+                try:
+                    cycling_window_live.record_issued_prediction(cycling, recorded_epoch=int(time.time()))
+                except Exception as error:
+                    print(f"[Cycling window archive] {type(error).__name__}: {error}")
         except Exception as error:
             analysis_delivery.fail(days, error)
             print(f"[Analysis] {type(error).__name__}: {error}")
@@ -8026,6 +8449,7 @@ def analysis_worker():
 
 
 _rain_trial_cache = OrderedDict()
+_rain_trial_cache_lock = threading.RLock()
 
 
 def cached_rain_learning(kind, rows, windows, issue_epoch):
@@ -8046,17 +8470,119 @@ def cached_rain_learning(kind, rows, windows, issue_epoch):
     targets = tuple((key, value.get("startEpoch"), value.get("endEpoch"))
                     for key, value in sorted((windows or {}).items()))
     key = (str(DB_PATH), kind, origin, sensor_revision, source_revision, targets)
-    cached = _rain_trial_cache.get(key)
-    if cached and cached[0] <= issue_epoch and issue_epoch - cached[0] < 900:
-        _rain_trial_cache.move_to_end(key)
-        return copy.deepcopy(cached[1])
-    value = (rain_pm_forecast.predict_nearterm(DB_PATH, rows, issue_epoch)
-             if kind == "near" else window_pm_predictor.predict_windows(
-                 DB_PATH, rows, windows, issue_epoch, rain_learning=True))
-    _rain_trial_cache[key] = (issue_epoch, copy.deepcopy(value))
-    while len(_rain_trial_cache) > 4:
-        _rain_trial_cache.popitem(last=False)
-    return value
+    with _rain_trial_cache_lock:
+        cached = _rain_trial_cache.get(key)
+        if cached and cached[0] <= issue_epoch and issue_epoch - cached[0] < 900:
+            _rain_trial_cache.move_to_end(key)
+            return copy.deepcopy(cached[1])
+        value = (rain_pm_forecast.predict_nearterm(DB_PATH, rows, issue_epoch)
+                 if kind == "near" else window_pm_predictor.predict_windows(
+                     DB_PATH, rows, windows, issue_epoch, rain_learning=True))
+        _rain_trial_cache[key] = (issue_epoch, copy.deepcopy(value))
+        while len(_rain_trial_cache) > 4:
+            _rain_trial_cache.popitem(last=False)
+        return value
+
+
+def annotate_session_delta_selection(estimates, previous, issue_epoch):
+    """Name the selected experimental estimator at its original issue clock."""
+    result = dict(estimates)
+    estimate = result.get("afternoon") or {}
+    if not (estimate.get("sessionDeltaModel") or {}).get("applied"):
+        return result
+    prior = (previous or {}).get("afternoon") or {}
+    selected = dict(estimate)
+    evidence = selected.get("modelEvidence") or {}
+    forecast_issue = selected.get("forecastIssuedEpoch") or selected.get("forecastedAtEpoch")
+    selected["modelSelection"] = {
+        "version": "session_delta_selection_v1",
+        "numericalPolicyIdentifier": selected.get("modelVersion"),
+        "selectedModelVersion": selected.get("modelVersion"),
+        "selectedPolicy": "experimental_session_delta",
+        "selectionReason": "inside_exact_reviewed_scope",
+        "selectionReasonText": "Experimental same-day session change model selected for this issue.",
+        "selectionIssueEpoch": int(issue_epoch),
+        "forecastIssuedEpoch": forecast_issue,
+        "forecastIssueState": (
+            "same_issue" if forecast_issue == issue_epoch else "different_issue"
+        ),
+        "targetStartEpoch": selected.get("startEpoch"),
+        "targetEndEpoch": selected.get("endEpoch"),
+        "scope": {
+            "timezone": "Asia/Kuala_Lumpur",
+            "reviewedIssueClock": evidence.get("reviewedIssueClock"),
+            "exactTargetRequired": True,
+        },
+        "supersededModelVersion": prior.get("modelVersion"),
+        "handoff": {
+            "mayChangePointWithoutNewObservations": True,
+            "interpretation": "A point change at this scheduled estimator boundary does not by itself indicate a measured PM2.5 change.",
+        },
+    }
+    result["afternoon"] = selected
+    return result
+
+
+def qualify_session_outputs(rows, windows, issue, estimates):
+    """Fresh exact-target baseline with separately identified experimental output.
+
+    Every publication passes this boundary, including older fallback models.
+    Stale references and changed issue/target clocks cannot qualify a candidate.
+    """
+    result = {}
+    for key, window in windows.items():
+        value = copy.deepcopy(estimates.get(key) or {})
+        start, end = window.get("startEpoch"), window.get("endEpoch")
+        baseline = session_prediction_policy.baseline_session_result(
+            rows, issue, start, end, key, reason=value.get("reason"),
+            candidate_model_version=value.get("modelVersion"))
+        if not baseline.get("available"):
+            result[key] = baseline
+            continue
+        candidate = dict(value.get("candidateForecast") or {})
+        original_reference = {field: value.get(field) for field in
+                              ("sensorAnchor", "sensorReferenceEpoch", "sensorReferenceCount", "sensorWatermarkEpoch")}
+        original_epoch = num(original_reference.get("sensorReferenceEpoch"))
+        original_count = num(original_reference.get("sensorReferenceCount"))
+        original_anchor = num(original_reference.get("sensorAnchor"))
+        original_watermark = num(original_reference.get("sensorWatermarkEpoch"))
+        reference_verified = bool(original_epoch is not None and math.isfinite(original_epoch)
+                                  and not any(isinstance(original_reference.get(field), (bool, np.bool_))
+                                              for field in ("sensorAnchor", "sensorReferenceEpoch", "sensorReferenceCount"))
+                                  and 0 <= issue-original_epoch <= 240
+                                  and original_count is not None and math.isfinite(original_count)
+                                  and original_count >= 1 and original_count == int(original_count)
+                                  and original_anchor is not None and math.isfinite(original_anchor)
+                                  and abs(original_anchor-baseline["sensorAnchor"]) <= .0500001
+                                  and (original_reference.get("sensorWatermarkEpoch") is None or
+                                       (original_watermark is not None and math.isfinite(original_watermark)
+                                        and not isinstance(original_reference["sensorWatermarkEpoch"], (bool, np.bool_))
+                                        and original_epoch <= original_watermark <= issue)))
+        candidate["originalSensorReference"] = original_reference
+        candidate["originalSensorReferenceVerified"] = reference_verified
+        if not reference_verified:
+            # Refreshing the operational baseline is not evidence that the
+            # separately computed candidate used that fresh reference.
+            value["modelEvidence"] = {}
+            candidate["qualificationBlockedReasons"] = ["original_candidate_reference_not_verified"]
+        clocks_match = (value.get("forecastedAtEpoch") == issue and
+                        value.get("startEpoch") == start and value.get("endEpoch") == end)
+        if not value.get("available") or not clocks_match:
+            candidate.update(available=False, mean=None,
+                             reason=value.get("reason") or "candidate_issue_or_target_clock_mismatch")
+        else:
+            candidate.setdefault("mean", value.get("mean"))
+            candidate.setdefault("modelVersion", value.get("modelVersion"))
+            candidate.setdefault("numericalPolicyIdentifier", value.get("modelVersion"))
+            for field in ("forecastedAtEpoch", "startEpoch", "endEpoch"):
+                candidate.setdefault(field, value.get(field))
+        value.update({field: baseline[field] for field in
+                      ("sensorAnchor", "sensorReferenceEpoch", "sensorReferenceCount",
+                       "persistenceAnchorRole", "forecastedAtEpoch", "startEpoch", "endEpoch")})
+        value.update(available=True, candidateForecast=candidate)
+        value["sensorWatermarkEpoch"] = max(int(row["epoch"]) for row in rows if row["epoch"] <= issue)
+        result[key] = session_prediction_policy.apply_session_prediction_policy(value, key)
+    return result
 
 
 def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context=None):
@@ -8067,16 +8593,33 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
     # a source fetched seconds into this minute is already available now.
     reference_epoch = int(time.time()) if replay_epoch is None else replay_epoch
     cutoff = int(reference_epoch - max(1.0, min(float(days), 30.0)) * 86400)
+    input_snapshot_opened_epoch = time.time() if replay_epoch is None else None
+    patchtst_sources = None
+    manifest_sources = []
     with db() as conn:
-        rows = conn.execute(
-            "SELECT epoch,pm02,pm10,pm003Count,atmp,rhum,heatindex,rco2,tvoc,"
-            "noxIndex,tvocIndex FROM readings WHERE epoch>=? AND epoch<=? "
-            "ORDER BY epoch",
-            (cutoff, reference_epoch)
-        ).fetchall()
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        rows = observation_provenance.compatible_sensor_rows(
+            conn, reference_epoch, cutoff, reference_epoch)
         first_stored_epoch = conn.execute(
             "SELECT MIN(epoch) FROM readings WHERE epoch<=?", (reference_epoch,)
         ).fetchone()[0]
+        if replay_epoch is None:
+            patchtst_sources = patchtst_session_forecast.read_issued_sources(
+                conn, min(reference_epoch, int(input_snapshot_opened_epoch))
+            )
+            for source_key, table in (("weather", "weather_forecast_runs"), ("cams", "air_quality_forecast_runs")):
+                used = [{"fetched_epoch": f, "payload": payload} for f, source, payload in patchtst_sources.get(source_key, [])]
+                manifest_sources.extend(observation_provenance.annotate_source_runs(conn, table, used, reference_epoch))
+
+    # The frozen rows are genuinely loaded before this live issue clock. Their
+    # availability does not depend on the previous dashboard publication.
+    input_snapshot_received_epoch = time.time() if replay_epoch is None else None
+    if input_snapshot_received_epoch is not None:
+        reference_epoch = max(reference_epoch, math.ceil(input_snapshot_received_epoch))
+        # Wait for the first integer second genuinely after source receipt.
+        # The background producer shares this one issue clock across all heads.
+        time.sleep(max(0.0, reference_epoch - time.time()))
 
     if not rows:
         return {"available": False, "message": "No local history yet. Leave the server running.",
@@ -8101,20 +8644,29 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
         trial_context.update(issueEpoch=reference_epoch, rows=rows)
     shower_signal = passing_shower_signal(rows)
     air_window = air_window_analysis(rows, shower_signal, reference_epoch)
-    shadow_forecast = dict(cached_shadow_analogue_outlook(rows, reference_epoch))
-    if replay_epoch is None:
+    rapid_change_reference = refresh_near_term_persistence(
+        rows, shower_signal, air_window, reference_epoch
+    )
+    rapid_change_risk = attach_experimental_rapid_change_risk(
+        rapid_change_reference, reference_epoch, {"rhum": rows[-1]["rhum"]}
+    )["experimentalRapidChangeRisk"]
+    shadow_forecast = (dict(cached_shadow_analogue_outlook(rows, reference_epoch))
+                       if include_trials else {"available": False, "enabled": False,
+                            "status": "diagnostics_pending", "usedForDecision": False,
+                            "appliedToPrimaryForecast": False})
+    if replay_epoch is None and include_trials:
         record_local_pm_forecast_issue(shadow_forecast, int(time.time()))
         shadow_forecast["prospectiveIssueLogActive"] = True
         shadow_forecast["prospectiveModelVersion"] = LOCAL_RIDGE_MODEL_VERSION
     rapid_event = rapid_clearance_event_outlook(rows, shower_signal)
     shadow_forecast["rapidClearanceEvent"] = rapid_event
     # Keep the very small-sample weather-assisted early watch quarantined from
-    # the dashboard state, external API and production persistence forecast.
+    # the dashboard state, external API and fixed numeric model outputs.
     shadow_forecast["dryDispersionWatch"] = shadow_dry_dispersion_watch(rows)
-    air_window = aggressive_air_window_forecast(
-        air_window, shadow_forecast, rapid_event
-    )
-    air_window = refresh_near_term_persistence(rows, shower_signal, air_window, reference_epoch)
+    # The fresh reference serves the separate event models and comparison
+    # metadata. Fixed numeric models are published below without selection.
+    air_window = rapid_change_reference
+    air_window = {**air_window, "experimentalRapidChangeRisk": rapid_change_risk}
     # A separately versioned learned rain association is collected, not promoted:
     # the fixed September 9 paired replay failed to improve overall wet-case error.
     # Its points and residuals must never relabel or replace the primary estimator.
@@ -8132,12 +8684,86 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
         except Exception as error:
             print(f"[Rain PM archive] {type(error).__name__}: {error}")
     air_window = separate_observation_from_prediction(air_window)
+    air_window = attach_experimental_short_horizon_change(
+        air_window, rows, reference_epoch
+    )
+    air_window = attach_first_crossing_event_forecast(air_window, rows, reference_epoch)
+    air_window["firstCrossingEventForecast"] = {
+        **(air_window.get("firstCrossingEventForecast") or {"available": False}),
+        "performanceEvidence": {
+            "state": "development_only", "prospectivelyValidated": False,
+            "modelVersion": fresh_event_model.MODEL_VERSION,
+            "caseCount": 1093, "dateCount": 4, "overlappingIssues": True,
+            "dropDetected": 8, "dropMissed": 58, "dropFalseAlarms": 64,
+            "brierScore": 0.362521, "classPriorBrierScore": 0.291692,
+            "summary": "Four inspected dates: 8 of 66 drops detected, 58 missed and 64 false alarms. Forecast accuracy remains limited; these overlapping historical issues are a development check.",
+        },
+    }
+    air_window = attach_cycling_window_forecast(air_window, rows, reference_epoch)
+    fresh_forecast = fresh_numeric_model.predict(rows, reference_epoch)
+    # Retain the exact issued feature vector for independent native-output
+    # checks, without changing the fitted recipe or any numerical output.
+    if fresh_forecast.get("available") and fresh_forecast.get("queryFeaturesHash"):
+        query_trace = fresh_numeric_model.sensor.issue_feature_frame(rows, [reference_epoch])
+        query_values = query_trace.to_numpy(dtype=float)
+        query_values[~np.isfinite(query_values)] = np.nan
+        if fresh_numeric_model._matrix_hash(query_trace.index, query_trace.columns, query_values) != fresh_forecast["queryFeaturesHash"]:
+            raise ValueError("issued_numeric_feature_trace_mismatch")
+        fresh_forecast = {**fresh_forecast, "featureColumns": list(query_trace.columns),
+                          "featureValues": [float(value) if math.isfinite(value) else None
+                                            for value in query_values[0]]}
+    fresh_forecast = {**fresh_forecast, "performanceEvidence": {
+        "state": "development_only", "prospectivelyValidated": False,
+        "modelVersion": fresh_numeric_model.MODEL_VERSION,
+        "arrivalCaseCount": 3232, "arrivalDateCount": 34, "overlappingIssues": True,
+        "arrivalMaeUgM3": 8.1124, "arrivalPersistenceMaeUgM3": 7.5402,
+        "arrivalEvaluationDates": ["2026-09-04", "2026-10-07"],
+        "rideCaseCount": 522, "rideDateCount": 7,
+        "trailMeanMaeUgM3": 10.9397, "previousTrailMeanMaeUgM3": 10.6953,
+        "summary": "Historical +90-minute comparison: 3,232 cases across 34 dates, average error 8.1 µg/m³; the sensor-reference comparator scored 7.5. A separate seven-date ride-mean check scored 10.9. Advance warning of large changes remains limited.",
+    }}
+    air_window = fresh_model_output.attach_outputs(air_window, fresh_forecast, reference_epoch)
+    # Target clocks belong to the frozen issue, independently of whether a
+    # numeric asset is available. Each learned head still validates its own clock.
+    air_window["forecastClock"] = fresh_numeric_model.forecast_clock(reference_epoch)
+    try:
+        arrival_inputs = arrival_feature_inputs.load_inputs(
+            DB_PATH, reference_epoch - 10800, reference_epoch, sensor_rows=rows
+        )
+        arrival_reference = arrival_feature_inputs.feature_metadata(arrival_inputs, reference_epoch)
+        arrival_change = arrival_change_model.predict_arrival(
+            DB_PATH, rows, reference_epoch, int(rows[-1]["epoch"]),
+            arrival_reference.get("freshReferencePm25"), feature_inputs=arrival_inputs,
+        )
+    except Exception as error:
+        arrival_change = {
+            "available": False, "modelVersion": arrival_change_model.MODEL_VERSION,
+            "forecastIssuedEpoch": reference_epoch, "arrivalEpoch": reference_epoch + 5400,
+            "reason": "arrival_input_unavailable", "errorType": type(error).__name__,
+        }
+    arrival_change = {**arrival_change, "performanceEvidence": {
+        "state": "chronological_development_only", "prospectivelyValidated": False,
+        "modelVersion": arrival_change_model.MODEL_VERSION,
+        "caseCount": 3232, "dateCount": 34, "overlappingIssues": True,
+        "evaluationDates": ["2026-09-04", "2026-10-07"],
+        "multiclassBrierScore": 0.155885, "classPriorBrierScore": 0.150380,
+        "logLoss": 0.365475, "classPriorLogLoss": 0.371524,
+        "fall40BrierScore": 0.012799, "fall40ClassPriorBrierScore": 0.009861,
+        "evaluationThresholdOnly": 0.10, "thresholdUsedForPublication": False,
+        "fall40PreOnsetEpisodeCount": 9, "fall40PreOnsetSignals": 5,
+        "fall40PreOnsetOwnArrivalPositiveEpisodes": 3,
+        "fall40FalseEndpointWarningClusters": 23,
+        "fall40FalseEndpointWarningIssues": 210,
+        "physicalSupportConstrained": False,
+        "summary": "34 historical dates: at a 10% evaluation threshold, 5 of 9 large-fall episodes had a signal before movement; only 3 matched the warning's own arrival target, with 23 false endpoint-warning clusters. Probability scores are mixed. Reliable advance-warning skill is not established. At low starting concentrations, this classifier can assign small probabilities to drops larger than the starting value.",
+    }}
+    air_window["arrivalChangeForecast"] = arrival_change
     # This is the final published stage, after the observed-reference refresh.
     # Earlier diagnostic stages retain their own points; no second model fit.
     if air_window.get("nearTermSelectionDiagnostics"):
         diagnostic = air_window["nearTermSelectionDiagnostics"]
         diagnostic["dashboardBuild"] = DASHBOARD_BUILD
-        diagnostic["numericalPolicyIdentifier"] = "near_routing_v3_independent_mean_peak"
+        diagnostic["numericalPolicyIdentifier"] = fresh_model_output.VERSION
         diagnostic["forecastIssuedEpoch"] = reference_epoch
         diagnostic["evidenceType"] = "observation_time_reconstruction" if replay_epoch is not None else "computed_for_publication"
         diagnostic["publishedStage"] = {
@@ -8156,6 +8782,24 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
     weather = weather_outlook(
         rows, forecast_epoch, include_runtime_status=replay_epoch is None
     )
+    # Archive the spatial input at the original issue clock. This read-only
+    # diagnostic does not fetch, fit, or select a numerical PM forecast.
+    try:
+        regional_pm_context = regional_pm_inputs.describe_context(
+            DB_PATH, reference_epoch,
+            origin=(WEATHER_LATITUDE, WEATHER_LONGITUDE),
+            weather_wind=latest_weather_payload(reference_epoch),
+        )
+    except Exception as error:
+        print(f"[Regional PM context] {type(error).__name__}: {error}")
+        regional_pm_context = {
+            "available": False, "modelVersion": regional_pm_inputs.VERSION,
+            "sourceIssueEpoch": reference_epoch,
+            "appliedToPrimaryForecast": False,
+            "reason": "regional_pm_context_unavailable",
+            "errorType": type(error).__name__,
+        }
+    air_window = {**air_window, "regionalPmInputs": regional_pm_context}
     baselines, paired_rows, coverage_pct = paired_history(rows)
     windows = {}
     for config in RIDE_WINDOWS:
@@ -8181,28 +8825,42 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
         }
         for key, window in windows.items()
     }
-    ride_forecast = cached_ride_window_particle_forecast(
-        rows, particle_windows, forecast_epoch, regime_break,
-        include_runtime_status=replay_epoch is None,
-    )
-    ride_forecast = apply_near_term_local_window_forecast(
-        ride_forecast, windows, air_window
-    )
-    # Only the explicitly approved morning-issued afternoon scope is replaced.
-    # The independently archived CAMS transform remains diagnostic only.
+    ride_forecast = {"available": False, "windows": {},
+                     "modelVersion": "fixed_session_models_direct_output_v21"}
+    # One fixed model per session. Performance evidence is descriptive and
+    # never replaces a numerical model output with persistence or another model.
     try:
-        session_estimates = window_pm_predictor.predict_windows(
-            DB_PATH, rows, particle_windows, forecast_epoch
+        session_estimates = weather_session_forecast.predict_windows(
+            DB_PATH, rows, {"morning": particle_windows["morning"]}, forecast_epoch,
+            allow_fit=replay_epoch is not None
         )
     except Exception as error:
-        print(f"[Window PM] {type(error).__name__}: {error}")
-        session_estimates = {}
-    try:
-        session_estimates = afternoon_direction_forecast.apply_experimental_afternoon(
-            DB_PATH, rows, particle_windows, forecast_epoch, session_estimates
+        print(f"[Morning model] {type(error).__name__}: {error}")
+        target = particle_windows["morning"]
+        session_estimates = {"morning": {
+            "available": False, "mean": None, "prediction": None,
+            "modelVersion": weather_session_forecast.MODEL_VERSION,
+            "forecastedAtEpoch": forecast_epoch, **target,
+            "pointRole": "experimental_model_output", "forecastState": "model_output",
+            "reason": "morning_model_calculation_unavailable", "usedForDecision": False}}
+    if replay_epoch is None:
+        patchtst_snapshot = patchtst_session_forecast.materialize_snapshot(
+            rows, patchtst_sources, forecast_epoch,
+            input_snapshot_opened_epoch, input_snapshot_received_epoch,
         )
-    except Exception as error:
-        print(f"[Afternoon direction] Keeping existing model: {type(error).__name__}: {error}")
+        session_estimates = patchtst_session_forecast.apply_experimental_afternoon(
+            rows, particle_windows, forecast_epoch, session_estimates,
+            snapshot=patchtst_snapshot,
+            weather_fetched_epoch=(windows.get("afternoon", {}).get("weatherForecast") or {}).get("sourceFetchedEpoch"),
+        )
+    else:
+        target = particle_windows["afternoon"]
+        session_estimates["afternoon"] = {
+            "available": False, "mean": None, "prediction": None,
+            "modelVersion": patchtst_session_forecast.MODEL_VERSION,
+            "forecastedAtEpoch": forecast_epoch, **target,
+            "pointRole": "experimental_model_output", "forecastState": "model_output",
+            "reason": "historical_patchtst_artifact_not_loaded", "usedForDecision": False}
     try:
         rain_session_trials = (cached_rain_learning("sessions", rows, particle_windows, forecast_epoch)
                                if include_trials else {})
@@ -8211,7 +8869,6 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
         rain_session_trials = {}
     if replay_epoch is None:
         try:
-            window_pm_predictor.record_issue(DB_PATH, session_estimates, int(time.time()))
             if include_trials:
                 window_pm_predictor.record_issue(DB_PATH, rain_session_trials, int(time.time()))
         except Exception as error:
@@ -8232,18 +8889,32 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
             print(f"[CAMS correction trial archive] {type(error).__name__}: {error}")
     scoped_direction_applied = any((value.get("directionalModel") or {}).get("applied")
                                    for value in session_estimates.values())
+    scoped_delta_applied = any((value.get("sessionDeltaModel") or {}).get("applied")
+                               for value in session_estimates.values())
+    weather_session_applied = any((value.get("weatherSessionModel") or {}).get("applied")
+                                  for value in session_estimates.values())
+    afternoon_xgboost_applied = (
+        (session_estimates.get("afternoon") or {}).get("modelVersion")
+        == afternoon_xgboost_forecast.MODEL_VERSION
+    )
+    afternoon_patchtst_applied = (
+        (session_estimates.get("afternoon") or {}).get("modelVersion")
+        == patchtst_session_forecast.MODEL_VERSION
+    )
     window_prediction = {
-        "modelVersion": "session_scoped_direction_v1" if scoped_direction_applied else window_pm_predictor.MODEL_VERSION,
+        "modelVersion": "fixed_session_models_direct_output_v21",
         "modelsByWindow": {key: value.get("modelVersion") for key, value in session_estimates.items()},
-        "note": "Exact-session experimental PM estimates. The adaptive local ensemble is retained except for the explicitly experimental 07:00–08:00 issue of the same-day 14:00–16:00 session, which uses a rise/steady/fall model. Only completed earlier outcomes train either model. Retrospective exploration is not prospective validation.",
+        "note": "Fixed Morning HGB and Afternoon PatchTST outputs for exact 09–11 and 14–16 sessions. No statistical selector, alternate-model routing, deadband or persistence substitution changes their predictions.",
         "predictions": session_estimates,
         "prospectivelyValidated": False,
         "regionalCorrectionTrial": {
             "modelVersion": cams_local_correction.MODEL_VERSION,
-            "status": "live_experimental_comparator",
+            "status": "suspended_live_diagnostics" if not include_trials else "offline_replay_candidate",
             "appliedToPrimaryForecast": False,
             "prospectivelyValidated": False,
-            "note": "CAMS session concentration plus a learned evolution of the TTDI-minus-CAMS correction. Historical replay did not beat the current model overall. This fixed candidate is recorded separately for future evaluation; it does not replace the headline forecast or select a session.",
+            "note": ("Live diagnostic fitting is paused to keep the primary forecast fresh; no CAMS correction trial was calculated for this issue."
+                     if not include_trials else
+                     "CAMS session concentration plus a learned evolution of the TTDI-minus-CAMS correction. Historical replay did not beat the current model overall. This candidate does not replace the headline forecast or select a session."),
         },
     }
     for key, window in windows.items():
@@ -8252,18 +8923,33 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
         rain_session = rain_session_trials.get(key) or {}
         particle = {
             "available": bool(estimate.get("available")),
-            "source": estimate.get("source", "local_session_adaptive_model"),
-            "modelVersion": estimate.get("modelVersion", window_pm_predictor.MODEL_VERSION),
+            "source": estimate.get("source", "fixed_session_model"),
+            "modelVersion": estimate.get("modelVersion"),
             "point": estimate.get("mean"),
-            "pointRole": "experimental_window_mean",
+            "pointRole": estimate.get("pointRole", "experimental_model_output"),
             "pointApproximate": True,
-            "forecastState": estimate.get("forecastState", "experimental_local_window_mean"),
+            "forecastState": estimate.get("forecastState", "model_output"),
             "directionalModel": estimate.get("directionalModel") or {},
-            "modelSelection": estimate.get("modelSelection") or {},
-            "baselinePoint": estimate.get("sensorAnchor"),
+            "sessionDeltaModel": estimate.get("sessionDeltaModel") or {},
+            "weatherSessionModel": estimate.get("weatherSessionModel") or {},
+            "patchtstModel": estimate.get("patchtstModel") or {},
+            "experimentalXgboostFallback": estimate.get("experimentalXgboostFallback") or {},
+            "experimentalPatchtstFallback": estimate.get("experimentalPatchtstFallback") or {},
+            "inputAvailabilityPolicy": estimate.get("inputAvailabilityPolicy"),
+            "inputSnapshotReceivedEpoch": estimate.get("inputSnapshotReceivedEpoch"),
+            "dbSnapshotOpenedEpoch": estimate.get("dbSnapshotOpenedEpoch"),
+            "forecastGeneratedEpoch": estimate.get("forecastGeneratedEpoch"),
+            "sensorWatermarkEpoch": estimate.get("sensorWatermarkEpoch"),
+            "sensorReferenceEpoch": estimate.get("sensorReferenceEpoch"),
+            "featureSourceMaxEpoch": estimate.get("featureSourceMaxEpoch"),
+            "modelSelection": {},
+            "candidateForecast": estimate.get("candidateForecast") or {},
+            "qualificationPolicy": estimate.get("qualificationPolicy") or {},
+            "baselinePoint": estimate.get("baselinePoint"),
             "persistenceAnchorRole": estimate.get("persistenceAnchorRole") or (
                 "trailing_5_minute_raw_sensor_median"
-                if (estimate.get("freshnessAdjustment") or {}).get("applied")
+                if ((estimate.get("sessionDeltaModel") or {}).get("applied")
+                    or (estimate.get("freshnessAdjustment") or {}).get("applied"))
                 else "latest_closed_15_minute_bucket_median"
             ),
             "persistenceAnchorEpoch": estimate.get("sensorReferenceEpoch") or estimate.get("originEpoch"),
@@ -8287,6 +8973,8 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
             "modelNote": estimate.get("sourceCaveat"),
             "regionalCorrectionTrial": {
                 "available": bool(trial.get("available")),
+                "status": ("suspended_live_diagnostics" if not include_trials else
+                           "available" if trial.get("available") else "unavailable"),
                 "modelVersion": cams_local_correction.MODEL_VERSION,
                 "appliedToPrimaryForecast": False,
                 "prospectivelyValidated": False,
@@ -8297,7 +8985,9 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
                 "forecastIssuedAt": iso_from_epoch(trial.get("forecastedAtEpoch")),
                 "sensorAnchorAt": iso_from_epoch(trial.get("originEpoch")),
                 "regionalDataRetrievedAt": iso_from_epoch(trial.get("camsFetchedEpoch")),
-                "reason": trial.get("reason"),
+                "reason": ("live_diagnostic_fits_suspended" if not include_trials else
+                           trial.get("reason") if trial.get("available") else
+                           trial.get("reason") or "trial_result_unavailable"),
             },
             "componentWeights": estimate.get("weights") or {},
             "componentEstimates": estimate.get("components") or {},
@@ -8307,16 +8997,15 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
                 "weatherFetchedAt": iso_from_epoch(estimate.get("weatherFetchedEpoch")),
             },
             "meanSkillEligible": False, "peakSkillEligible": False,
-            "validated": False, "usedForComparison": False,
-            "usedForDecision": bool(estimate.get("available")),
+            "validated": bool(estimate.get("validated")), "usedForComparison": False,
+            "usedForDecision": bool(estimate.get("usedForDecision")),
+            "modelOutputPolicy": estimate.get("modelOutputPolicy") or {},
+            "performanceEvidence": estimate.get("performanceEvidence") or {},
+            "numericalPolicyIdentifier": estimate.get("numericalPolicyIdentifier"),
+            "prospectivelyValidated": bool(estimate.get("prospectivelyValidated")),
             "leadHours": estimate.get("leadHours"), "durationHours": 2,
-            "confidence": ("Low · experimental direction model" if (estimate.get("directionalModel") or {}).get("applied")
-                           else "Low · experimental PM model" if estimate.get("available") else "Insufficient"),
-            "method": estimate.get("method") or ("Adaptive local PM ensemble · aligned weather · exact 2-hour session"
-                       if (estimate.get("rainContext") or estimate.get("rainFeatures") or {}).get("available")
-                       else "Adaptive local PM ensemble · recent-sensor refresh · exact 2-hour session"
-                       if (estimate.get("freshnessAdjustment") or {}).get("applied")
-                       else "Adaptive local PM ensemble · closed-reference fallback · exact 2-hour session"),
+            "confidence": estimate.get("confidence", "Experimental · predictive accuracy unproven"),
+            "method": estimate.get("method") or "Fixed model output for the exact 2-hour session",
             "message": ("PM model unavailable: " + str(estimate.get("reason", "calculation unavailable")).replace("_", " ")),
         }
         confidence = particle["confidence"]
@@ -8334,7 +9023,15 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
         window["forecastIssuedEpoch"] = issued
         window["forecastedLabel"] = f'Forecasted at {local_dt(issued):%H:%M}'
         window["recheckLabel"] = window["forecastedLabel"]
-    comparison = local_window_pm_comparison(windows, window_prediction)
+    comparison = {
+        "ready": any(v.get("available") for v in session_estimates.values()),
+        "role": "direct_model_outputs", "headline": "Morning and afternoon model forecasts",
+        "summary": "Each number is the output of its fixed model for the exact session shown. Performance results do not select or replace the prediction.",
+        "prescriptiveRecommendation": False, "model": {"displayLabel": "Direct model outputs"}}
+    ride_forecast.update({"available": any(v.get("available") for v in session_estimates.values()),
+                          "windows": {key: window["particleForecast"] for key, window in windows.items()},
+                          "forecastIssuedEpoch": forecast_epoch,
+                          "numericalPerformanceSelection": False, "numericPersistenceFallback": False})
     regional_payload = latest_air_quality_payload(forecast_epoch)
     regional_weather = latest_weather_payload(forecast_epoch)
     for window in windows.values():
@@ -8355,23 +9052,72 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
     return json_safe({
         "available": True,
         "forecastIssuedEpoch": reference_epoch,
+        "_materializedInputManifest": observation_provenance.build_input_manifest(
+            rows, manifest_sources, reference_epoch, metadata={
+                "sensorView": "raw_rows_in_primary_read_transaction",
+                "sensorQueryStartEpoch": cutoff, "sensorQueryEndEpoch": reference_epoch,
+                "dbSnapshotOpenedEpoch": input_snapshot_opened_epoch,
+                "materializedReceiptEpoch": input_snapshot_received_epoch,
+                "coveredSources": "exact_PatchTST_query_sources",
+                "additionalModelSources": "separate_reader_source_hashes_and_clocks_in_model_metadata",
+                "allModelInputsFrozenTogether": False,
+                "historicalReceiptPolicy": "legacy_unknown_no_backfill"}),
         "dataCoverage": collection_summary(rows, reference_epoch),
         "historyHours": round((latest_epoch - int(first_stored_epoch)) / 3600, 2),
         "current": current,
         "outlook": trend_outlook(rows, shower_signal),
         "airWindow": air_window,
         "shadowForecast": shadow_forecast,
+        "freshSensorForecast": fresh_forecast,
         "rainLearning": rain_trial,
         "forecastPolicy": {
-            "id": "neutral_particle_forecast_v10_reviewed_reference_and_routing",
-            "nearTermNumericalPolicy": "near_routing_v3_independent_mean_peak",
-            "sessionWeightPolicy": window_pm_predictor.WEIGHT_POLICY_VERSION,
-            "recentSensorReferenceRefresh": True,
-            "aggressive": AGGRESSIVE_FORECAST_ENABLED,
-            "weatherUsedForParticleForecast": any(v.get("weatherAvailable") for v in session_estimates.values()),
+            "id": "fixed_direct_models_with_arrival_change_v24",
+            "sessionTargetPolicy": "canonical_09_11_and_14_16_with_90_minute_logistics_lead",
+            "nearTermNumericalPolicy": fresh_model_output.VERSION,
+            "sessionWeightPolicy": "none_fixed_models",
+            "numericalPerformanceSelection": False,
+            "numericPersistenceFallback": False,
+            "sessionNumericalPolicy": window_prediction["modelVersion"],
+            "afternoonExperimentalSelection": patchtst_session_forecast.MODEL_VERSION,
+            "afternoonExperimentalModelApplied": afternoon_patchtst_applied,
+            "afternoonFallbackModelApplied": afternoon_xgboost_applied,
+            "recentSensorReferenceRefresh": False,
+            "aggressive": False,
+            "weatherUsedForParticleForecast": any(
+                v.get("weatherAvailable") and
+                v.get("available")
+                for v in session_estimates.values()),
             "nearTermWeatherUsedForParticleForecast": False,
-            "rainLearningAppliedToPrimaryForecast": False,
-            "rainLearningStatus": "evaluation_only_no_demonstrated_skill_gain",
+            "regionalPmInputVersion": regional_pm_inputs.VERSION,
+            "regionalPmInputsUsedForParticleForecast": False,
+            "nearTermModelReview": {
+                "reviewDate": "2026-10-01",
+                "status": "no_candidate_qualified",
+                "candidateCount": 7,
+                "directionThresholdUgM3": 10.0,
+                "evidence": "retrospective_replay_previously_viewed",
+                "prospectivelyValidated": False,
+            },
+            "experimentalRapidChangeRiskModelVersion": near_term_hazard.MODEL_VERSION,
+            "experimentalRapidChangeRiskUsedForParticleForecast": False,
+            "experimentalRapidChangeRiskProbabilityThreshold": 0.20,
+            "shortHorizonChangeModelVersion": short_horizon_change.MODEL_VERSION,
+            "shortHorizonChangeUsedForParticleForecast": False,
+            "firstCrossingEventModelVersion": fresh_event_model.MODEL_VERSION,
+            "arrivalChangeModelVersion": arrival_change_model.MODEL_VERSION,
+            "arrivalChangeTarget": "exact_issue_plus90_from_fresh5_reference",
+            "firstCrossingEventModelSelected": True,
+            "firstCrossingEventUsedForDirectionForecast": bool(((air_window.get("firstCrossingEventForecast") or {}).get("qualification") or {}).get("operationalUseEligible")),
+            "firstCrossingEventUsedForParticleConcentration": False,
+            "firstCrossingEventThresholdUgM3": 20.0,
+            "firstCrossingEventDecisionRule": "three_class_argmax_ties_unresolved",
+            "firstCrossingEventSelection": "diagnostic_until_actual_cadence_prospective_qualification",
+            "cyclingWindowProbabilityModelVersion": cycling_window_live.MODEL_VERSION,
+            "cyclingWindowProbabilitySelected": True,
+            "cyclingWindowPlanningCutoffUgM3": 70.0,
+            "cyclingWindowDisplay": "automatically_updated_probability",
+            "rainLearningAppliedToPrimaryForecast": weather_session_applied,
+            "rainLearningStatus": "experimental_weather_session_learning" if weather_session_applied else "fixed_session_model_output_unavailable",
             "windowForecastMethod": window_prediction["modelVersion"],
             "windowForecastModels": {key: value.get("modelVersion") for key, value in session_estimates.items()},
             "prescriptiveRecommendation": False,
@@ -8400,7 +9146,13 @@ def iso_from_epoch(epoch):
 
 
 def compact_weather_window(window):
-    result = {"available": bool((window or {}).get("available"))}
+    window = window or {}
+    result = {"available": bool(window.get("available")),
+              "weatherCoverage": window.get("weatherCoverage") or {},
+              "coverageReason": window.get("coverageReason"),
+              "startAt": iso_from_epoch(window.get("startEpoch")),
+              "endAt": iso_from_epoch(window.get("endEpoch")),
+              "forecastFetchedAt": iso_from_epoch(window.get("sourceFetchedEpoch"))}
     if not result["available"]:
         return result
     result.update({
@@ -8526,11 +9278,16 @@ def compact_window_particle_forecast(forecast):
     candidate = forecast.get("candidate") or {}
     forecast_state = str(forecast.get("forecastState") or "")
     point_role = forecast.get("pointRole")
-    is_session_model = point_role == "experimental_window_mean"
+    is_session_policy = forecast.get("modelVersion") in (
+        window_pm_predictor.MODEL_VERSION, weather_session_forecast.MODEL_VERSION,
+        afternoon_xgboost_forecast.MODEL_VERSION,
+        patchtst_session_forecast.MODEL_VERSION,
+    )
     has_model_point = bool(forecast.get("available") and num(forecast.get("point")) is not None and point_role in {
         "validated_forecast", "aggressive_cams_forecast",
         "provisional_cams_context", "aggressive_local_ridge",
         "aggressive_rapid_clearance_event", "experimental_window_mean",
+        "experimental_model_output", "raw_model_output",
     })
     has_peak_model_point = bool(
         forecast.get("peakApproximate") or has_model_point
@@ -8542,7 +9299,8 @@ def compact_window_particle_forecast(forecast):
         "experimental_not_validated"
         if (forecast_state.startswith("aggressive_")
             or forecast_state.startswith("experimental_")
-            or forecast_state.startswith("local_near_term_experimental")) else
+            or forecast_state.startswith("local_near_term_experimental")
+            or forecast_state == "model_output") else
         "provisional_context_only"
         if forecast_state.startswith("provisional_") else
         "persistence_only"
@@ -8561,10 +9319,24 @@ def compact_window_particle_forecast(forecast):
         "method": forecast.get("method"),
         "modelVersion": forecast.get("modelVersion"),
         "directionalModel": forecast.get("directionalModel") or {},
+        "sessionDeltaModel": forecast.get("sessionDeltaModel") or {},
+        "weatherSessionModel": forecast.get("weatherSessionModel") or {},
+        "patchtstModel": forecast.get("patchtstModel") or {},
+        "experimentalXgboostFallback": forecast.get("experimentalXgboostFallback") or {},
+        "experimentalPatchtstFallback": forecast.get("experimentalPatchtstFallback") or {},
         "modelSelection": forecast.get("modelSelection") or {},
+        "candidateForecast": forecast.get("candidateForecast") or {},
+        "modelOutputPolicy": forecast.get("modelOutputPolicy") or {},
+        "performanceEvidence": forecast.get("performanceEvidence") or {},
+        "numericalPolicyIdentifier": forecast.get("numericalPolicyIdentifier"),
+        "usedForDecision": bool(forecast.get("usedForDecision")),
+        "validated": bool(forecast.get("validated")),
+        "prospectivelyValidated": bool(forecast.get("prospectivelyValidated")),
+        "qualificationPolicy": forecast.get("qualificationPolicy") or {},
         "confidence": confidence_code(forecast.get("confidence")),
         "confidenceDetail": forecast.get("confidence"),
         "baselineMeanPm25UgM3": forecast.get("baselinePoint"),
+        "publishedMeanPm25UgM3": forecast.get("point"),
         "persistenceAnchorRole": forecast.get(
             "persistenceAnchorRole", "latest_raw_sensor_reading"
         ),
@@ -8609,7 +9381,7 @@ def compact_window_particle_forecast(forecast):
         "uncertainty": {
             "state": (
                 "collecting" if forecast.get("rawRangeLow") is None else
-                "uncalibrated_replay_errors" if is_session_model else
+                "uncalibrated_as_issued_errors" if is_session_policy else
                 "uncalibrated_matched_history"
                 if forecast.get("rawRangeLow") is not None else "collecting"
             ),
@@ -8643,9 +9415,12 @@ def compact_window_particle_forecast(forecast):
             },
             "note": (
                 "No model-specific prediction interval is available; the previous model's residual range is not reused."
-                if (forecast.get("directionalModel") or {}).get("applied") else
-                "Exact-lead historical replay residuals for the session mean; overlapping outcomes, not a calibrated prediction interval."
-                if is_session_model else
+                if ((forecast.get("directionalModel") or {}).get("applied")
+                    or (forecast.get("sessionDeltaModel") or {}).get("applied")) else
+                "Matched same-clock issued outcomes are still accumulating; no session error span is available."
+                if is_session_policy and forecast.get("rawRangeLow") is None else
+                "Same-target, same-clock issued session errors; a small and uncalibrated prediction span."
+                if is_session_policy else
                 "Descriptive matched-history evidence; not the planning estimate "
                 "and not a calibrated prediction interval."
             ),
@@ -8862,6 +9637,157 @@ def ride_evidence_json_schema():
         },
         "additionalProperties": True,
     }
+    rapid_change_target_schema = {
+        "type": "object",
+        "required": ["available"],
+        "properties": {
+            "available": {"type": "boolean"},
+            "probability": {"type": "number", "minimum": 0, "maximum": 1},
+            "flag": {
+                "type": "boolean",
+                "description": "True when the experimental probability reaches the fixed 0.20 threshold; it does not indicate rising or falling PM2.5.",
+            },
+            "targetEpoch": {"type": "integer"},
+            "startEpoch": {"type": "integer"},
+            "endEpoch": {"type": "integer"},
+            "completionEpoch": {"type": "integer"},
+            "trainingCount": {"type": "integer", "minimum": 0},
+            "trainingEvents": {"type": "integer", "minimum": 0},
+            "lastTrainingIssueEpoch": {"type": "integer"},
+            "lastTrainingOutcomeCompleteEpoch": {"type": "integer"},
+            "reason": nullable_string,
+        },
+        "additionalProperties": True,
+    }
+    rapid_change_schema = {
+        "type": "object",
+        "required": ["available"],
+        "allOf": [{
+            "if": {"properties": {"available": {"const": True}}},
+            "then": {"required": ["experimental", "prospectivelyValidated",
+                                   "directionAvailable", "thresholdUgM3",
+                                   "probabilityThreshold", "targets"]},
+        }],
+        "description": (
+            "Separate experimental probability that the exact +90-minute PM2.5 target or "
+            "+90-to-+210-minute mean differs from the as-issued sensor reference by at least "
+            "20 µg/m³ in either direction. It never changes the main PM2.5 point, empirical "
+            "range, or ride-window comparison and has no prospective validation."
+        ),
+        "properties": {
+            "available": {"type": "boolean"},
+            "modelVersion": nullable_string,
+            "experimental": {"const": True},
+            "prospectivelyValidated": {"const": False},
+            "calibrated": {"const": False},
+            "directionAvailable": {"const": False},
+            "thresholdUgM3": {"const": 20.0},
+            "probabilityThreshold": {"const": 0.20},
+            "definition": nullable_string,
+            "sourceIssueEpoch": {"type": "integer"},
+            "featureAnchorEpoch": {"type": ["integer", "null"]},
+            "freshPm25UgM3": nullable_number,
+            "trainingCutoffEpoch": {"type": "integer"},
+            "trainedThroughIssueDay": {"type": "string", "format": "date"},
+            "trainingWindowDays": {"type": "integer", "minimum": 1},
+            "reason": nullable_string,
+            "targets": {
+                "type": "object",
+                "properties": {
+                    "arrival90": rapid_change_target_schema,
+                    "mean90to210": rapid_change_target_schema,
+                },
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": True,
+    }
+    short_change_target_schema = {
+        "type": "object", "required": ["available", "targetEpoch"],
+        "properties": {
+            "available": {"type": "boolean"},
+            "horizonMinutes": {"enum": [15, 30]},
+            "targetEpoch": {"type": "integer"},
+            "observedOutcomeCompleteAfterEpoch": {"type": "integer"},
+            "riseProbability": {"type": "number", "minimum": 0, "maximum": 1},
+            "fallProbability": {"type": "number", "minimum": 0, "maximum": 1},
+            "stableProbability": {"type": "number", "minimum": 0, "maximum": 1},
+            "trainingCount": {"type": "integer", "minimum": 0},
+            "riseEvents": {"type": "integer", "minimum": 0},
+            "fallEvents": {"type": "integer", "minimum": 0},
+            "largeEventProbabilityAvailable": {"const": False},
+            "reason": nullable_string,
+        }, "additionalProperties": True,
+    }
+    short_change_schema = {
+        "type": "object", "required": ["available"],
+        "description": (
+            "Diagnostic-only, uncalibrated +15/+30-minute probabilities of a rise or fall "
+            "of at least 10 µg/m³ from the as-issued recent sensor reference. Large-change "
+            "probabilities are unavailable for lack of examples. Never changes a PM forecast point."
+        ),
+        "properties": {
+            "available": {"type": "boolean"},
+            "experimental": {"const": True},
+            "prospectivelyValidated": {"const": False},
+            "calibrated": {"const": False},
+            "appliedToPrimaryForecast": {"const": False},
+            "modelVersion": nullable_string,
+            "targetVersion": nullable_string,
+            "thresholdUgM3": {"const": 10.0},
+            "largeEventThresholdUgM3": {"const": 20.0},
+            "sourceIssueEpoch": {"type": "integer"},
+            "trainingCutoffEpoch": {"type": "integer"},
+            "referencePm25UgM3": nullable_number,
+            "reason": nullable_string,
+            "targets": {"type": "object", "properties": {
+                "minutes15": short_change_target_schema,
+                "minutes30": short_change_target_schema,
+            }, "additionalProperties": False},
+        }, "additionalProperties": True,
+    }
+    first_crossing_schema = {
+        "type": "object", "required": ["available"],
+        "description": (
+            "User-selected experimental first rise/drop of at least 20 ug/m3 within 90 minutes, "
+            "sampled at six 15-minute median-proxy targets. This is an event-direction forecast; "
+            "the +90-minute concentration is the separate fixed analogue model output. Probabilities are uncalibrated. "
+            "The largest of drop, no crossing and rise probabilities determines the call; ties are unresolved. "
+            "The threshold is a change relative to referencePm, not an exact magnitude or endpoint estimate. "
+            "displayText presents the diagnostic outcome and does not imply operational qualification."
+        ),
+        "properties": {
+            "available": {"type": "boolean"},
+            "modelVersion": nullable_string,
+            "experimental": {"const": True},
+            "calibrated": {"const": False},
+            "displayText": {"type": ["string", "null"], "description": "Shared server momentum label from the highest-probability diagnostic first-crossing outcome; independent of operational qualification. Null when unavailable or malformed."},
+            "forecastIssuedEpoch": {"type": "integer"},
+            "validUntilEpoch": {"type": "integer"},
+            "referencePm": nullable_number,
+            "changeThresholdUgM3": {"const": 20},
+            "direction": {"enum": ["rise", "drop", "unresolved"]},
+            "directionDecision": {"const": "three_class_argmax_ties_unresolved"},
+            "thresholdComparison": {"const": "at_least"},
+            "target": {"const": "first_sampled_crossing_within90_minutes"},
+            "probabilityRise": {"type": "number", "minimum": 0, "maximum": 1},
+            "probabilityDrop": {"type": "number", "minimum": 0, "maximum": 1},
+            "probabilityNoCrossing": {"type": "number", "minimum": 0, "maximum": 1},
+            "trainingCutoffEpoch": {"type": "integer"},
+            "fittedAtEpoch": {"type": "integer"},
+            "unvalidatedLiveCadence": {"const": True},
+            "reason": nullable_string,
+            "horizons": {"type": "array", "items": {
+                "type": "object", "required": ["leadMinutes", "probabilityRise", "probabilityDrop", "probabilityNoCrossing"],
+                "properties": {
+                    "leadMinutes": {"enum": [15, 30, 45, 60, 75, 90]},
+                    "probabilityRise": {"type": "number", "minimum": 0, "maximum": 1},
+                    "probabilityDrop": {"type": "number", "minimum": 0, "maximum": 1},
+                    "probabilityNoCrossing": {"type": "number", "minimum": 0, "maximum": 1},
+                }, "additionalProperties": True,
+            }},
+        }, "additionalProperties": True,
+    }
     exposure_schema = {
         "type": "object",
         "required": ["available"],
@@ -8880,6 +9806,13 @@ def ride_evidence_json_schema():
             "targetDefinition": nullable_string,
             "meanTargetDefinition": nullable_string,
             "peakTargetDefinition": nullable_string,
+            "rideMinimumMaximumPm25UgM3": {
+                "type": "object", "additionalProperties": True,
+                "description": "Literal joint model outputs for the minimum and maximum covered 15-minute bucket medians overlapping the exact +90..210-minute ride window. Separate from the mean; not a confidence interval or continuous-time extreme guarantee.",
+                "properties": {"available": {"type": "boolean"}, "low": nullable_number,
+                               "high": nullable_number, "modelVersion": nullable_string,
+                               "targetResolutionMinutes": {"const": 15}},
+            },
             "basedOnObservedAt": {
                 "type": ["string", "null"], "format": "date-time"
             },
@@ -8966,11 +9899,30 @@ def ride_evidence_json_schema():
             "modelVersion": nullable_string,
             "modelSelection": {
                 "type": "object", "additionalProperties": True,
-                "description": "Actual selected estimator, scope/fallback reason and original issue. Scheduled handoff is not measured PM movement; cached points retain their estimator and target clocks.",
+                "description": "Historical selection metadata; current fixed model outputs use no numerical selector.",
+            },
+            "candidateForecast": {
+                "type": "object", "additionalProperties": True,
+                "description": "Literal fixed model output. Its mean equals publishedMeanPm25UgM3 without deadband, baseline substitution or performance selection.",
+            },
+            "modelOutputPolicy": {"type": "object", "additionalProperties": True},
+            "performanceEvidence": {"type": "object", "additionalProperties": True},
+            "numericalPolicyIdentifier": nullable_string,
+            "usedForDecision": {"type": "boolean"},
+            "validated": {"type": "boolean"},
+            "prospectivelyValidated": {"type": "boolean"},
+            "publishedMeanPm25UgM3": nullable_number,
+            "patchtstModel": {
+                "type": "object", "additionalProperties": True,
+                "description": "Original daily cached PatchTST identity, exact input clocks, literal raw mean and descriptive extrapolation metadata; no deadband or alternate-model fallback.",
+            },
+            "experimentalPatchtstFallback": {
+                "type": "object", "additionalProperties": True,
+                "description": "Historical field. Current missing PatchTST outputs are unavailable with no alternate model retained.",
             },
             "directionalModel": {
                 "type": "object",
-                "description": "Scoped experimental same-day 14:00–16:00 direction model for 07:00–08:00 Malaysia issues. Empty outside that estimator. Development improvement is not prospective validation; false clearing remains possible.",
+                "description": "Shadow-only same-day afternoon direction experiment. Historical issue and target clocks are aligned; it cannot replace the selected point without issued validation.",
                 "properties": {
                     "applied": {"type": "boolean"},
                     "direction": {"enum": ["rising", "falling", "steady"]},
@@ -8982,15 +9934,32 @@ def ride_evidence_json_schema():
                 },
                 "additionalProperties": True,
             },
+            "sessionDeltaModel": {
+                "type": "object",
+                "description": "Withheld afternoon session-change experiment; no completed issued-outcome evidence supports primary selection.",
+                "properties": {
+                    "applied": {"type": "boolean"},
+                    "changeFromFreshUgM3": nullable_number,
+                    "directionAtFiveUgM3": {"enum": ["rising", "falling", "steady"]},
+                    "parameters": {"type": "object", "additionalProperties": True},
+                },
+                "additionalProperties": True,
+            },
+            "weatherSessionModel": {
+                "type": "object", "additionalProperties": True,
+                "description": "Experimental daily-fitted session change learner: exact issued weather, completed-label training cutoff, used feature columns, richer weather diagnostics and fallback reason. Replay is separate from frozen issued accuracy.",
+            },
             "regionalCorrectionTrial": {
                 "type": ["object", "null"],
                 "description": (
                     "Separate experimental CAMS plus learned local correction. "
                     "Never substitutes for projectedMeanPm25UgM3 or comparison. "
+                    "Status distinguishes a paused live fit from unavailable model inputs. "
                     "Retrieval time is not native CAMS model initialization time."
                 ),
                 "properties": {
                     "available": {"type": "boolean"},
+                    "status": {"enum": ["suspended_live_diagnostics", "available", "unavailable"]},
                     "modelVersion": nullable_string,
                     "meanPm25UgM3": nullable_number,
                     "appliedToPrimaryForecast": {"const": False},
@@ -9303,6 +10272,29 @@ def ride_evidence_json_schema():
                 "properties": {
                     "arrival": exposure_schema,
                     "onTrail": exposure_schema,
+                    "experimentalRapidChangeRisk": rapid_change_schema,
+                    "shortHorizonChange": short_change_schema,
+                    "firstCrossingEventForecast": first_crossing_schema,
+                    "arrivalChangeForecast": {
+                        "type": "object", "required": ["available"],
+                        "description": "Learned exact +90 arrival changes relative to the issue's trailing five-minute sensor reference. Independent of the first-crossing forecast; all four tails remain visible.",
+                        "properties": {
+                            "available": {"type": "boolean"},
+                            "modelVersion": nullable_string,
+                            "forecastIssuedEpoch": nullable_number,
+                            "arrivalEpoch": nullable_number,
+                            "referencePm": nullable_number,
+                            "arrivalLeadMinutes": {"const": 90},
+                            "probabilityFall20": nullable_number,
+                            "probabilityFall40": nullable_number,
+                            "probabilityRise20": nullable_number,
+                            "probabilityRise40": nullable_number,
+                            "probabilityWithin20": nullable_number,
+                            "classProbabilities": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}},
+                            "performanceEvidence": {"type": "object", "additionalProperties": True},
+                        }, "additionalProperties": True,
+                    },
+                    "cyclingWindowForecast": cycling_window_json_schema(),
                 },
                 "additionalProperties": True,
             },
@@ -9468,7 +10460,7 @@ def ride_evidence_json_schema():
                             "maximumAgeSeconds": {"const": 600},
                             "retryAfterSeconds": {"type": ["number", "null"], "minimum": 0},
                             "error": nullable_string,
-                            "diagnostics": {"enum": ["pending", "complete", "error"]},
+                            "diagnostics": {"enum": ["pending", "complete", "error", "skipped"]},
                         },
                         "additionalProperties": True,
                     },
@@ -9675,6 +10667,25 @@ def _ride_api_openapi(revision):
                             "description": "The cached schema is current.",
                             "headers": contract_headers,
                         },
+                    },
+                }
+            },
+            "/api/cycling-plan": {
+                "get": {
+                    "operationId": "recheckFixedCyclingWindow",
+                    "summary": "Recheck a tracked ride window against the personal 70 ug/m3 cutoff",
+                    "description": "Uses a cached model and current inputs for the original two-hour window. Call about 30 minutes after the initial forecast, with 55 to 65 minutes remaining before the ride starts. No fitting occurs in this request. This is a preparation aid, not a cycling clearance.",
+                    "parameters": [
+                        {"name": "startEpoch", "in": "query", "required": True,
+                         "schema": {"type": "integer"}},
+                        {"name": "endEpoch", "in": "query", "required": True,
+                         "schema": {"type": "integer"}},
+                    ],
+                    "responses": {
+                        "200": {"description": "Current probability or an explicit unavailable reason for the fixed window.",
+                                "content": {"application/json": {"schema": cycling_window_json_schema()}}},
+                        "400": {"description": "Missing or invalid window parameters."},
+                        "500": {"description": "Recheck could not be generated."},
                     },
                 }
             },
@@ -9892,6 +10903,11 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
             "particleNowcast": {"available": False},
             "exposureOutlook": {
                 "arrival": {"available": False}, "onTrail": {"available": False},
+                "experimentalRapidChangeRisk": {"available": False},
+                "shortHorizonChange": {"available": False},
+                "firstCrossingEventForecast": {"available": False},
+                "arrivalChangeForecast": {"available": False},
+                "cyclingWindowForecast": {"available": False},
             },
             "weather": {"available": False},
             "clearanceEvent": {"detected": False},
@@ -9993,7 +11009,7 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
     if not weather_evidence.get("supported"):
         limitations.append({
             "code": "weather_particle_link_unvalidated",
-            "message": "Specific weather–PM causal links remain unvalidated. The experimental session ensemble may use issued weather features; no physical cause is asserted.",
+            "message": "The session model learns weather associations from issued forecasts. Rain probability is not PM washout probability, and forecast rain can miss the local sensor. Specific weather–PM causal links remain unvalidated.",
         })
     comparison = result.get("comparison") or {}
     if not comparison.get("ready"):
@@ -10013,12 +11029,17 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
     if result.get("windowPrediction"):
         limitations.append({
             "code": "local_session_pm_model_experimental",
-            "message": "Session forecasts are experimental. The 07:00–08:00 issue for same-day 14:00–16:00 may use the direction model; other sessions retain the adaptive local model. Inspect each window's modelVersion and directionalModel. Retrospective exploration is not prospective validation.",
+            "message": "Morning displays the fixed HGB output and Afternoon the fixed PatchTST output, without deadband, baseline substitution or alternate-model selection. Performance and extrapolation metadata do not change the number. Missing model outputs are unavailable; issued accuracy is collecting.",
         })
-        if (result["windowPrediction"].get("regionalCorrectionTrial")):
+        trial_metadata = result["windowPrediction"].get("regionalCorrectionTrial")
+        if trial_metadata:
             limitations.append({
                 "code": "cams_local_correction_trial_not_applied",
-                "message": "The separate CAMS plus learned local correction trial did not beat the current model overall in development replay. It is recorded for future evaluation, not applied to the primary forecasts or session comparison.",
+                "message": (
+                    "The optional live CAMS plus local correction trial is paused; no trial point was calculated for this issue."
+                    if trial_metadata.get("status") == "suspended_live_diagnostics" else
+                    "The separate CAMS plus learned local correction trial did not beat the current model overall in development replay. It is not applied to the primary forecasts or session comparison."
+                ),
             })
     elif not issued_particle.get("supported"):
         limitations.append({
@@ -10036,7 +11057,7 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
                 "decision lead and exact modeled session."
             ),
         })
-    if air_quality_payload is None or air_quality_error:
+    if air_quality_payload is None:
         limitations.append({
             "code": "cams_particle_forecast_unavailable",
             "message": str(air_quality_error or "The CAMS candidate is unavailable."),
@@ -10046,6 +11067,11 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
         limitations.append({
             "code": "cams_particle_forecast_stale",
             "message": "The CAMS candidate is stale; persistence remains available.",
+        })
+    elif air_quality_error:
+        limitations.append({
+            "code": "cams_refresh_failed_using_cached_forecast",
+            "message": "The latest CAMS refresh failed; the previously issued forecast remains available.",
         })
 
     particle_mix = air_window.get("particleMix") or {}
@@ -10199,6 +11225,11 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
             "particleMixSignal": mix_signal,
         },
         "exposureOutlook": {
+            "experimentalRapidChangeRisk": air_window.get("experimentalRapidChangeRisk") or {"available": False},
+            "shortHorizonChange": air_window.get("shortHorizonChange") or {"available": False},
+            "firstCrossingEventForecast": air_window.get("firstCrossingEventForecast") or {"available": False},
+            "arrivalChangeForecast": air_window.get("arrivalChangeForecast") or {"available": False},
+            "cyclingWindowForecast": air_window.get("cyclingWindowForecast") or {"available": False},
             "arrival": {
                 "available": bool(arrival.get("available")),
                 "freshnessAdjustment": arrival.get("freshnessAdjustment") or {},
@@ -10222,6 +11253,9 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
                     arrival.get("persistenceAnchorEpoch")
                 ),
                 "modelFeatureAnchorPm25UgM3": arrival.get("modelFeatureAnchor"),
+                "modelVersion": arrival.get("modelVersion"),
+                "modelOutput": arrival.get("modelOutput") or {},
+                "performanceEvidence": arrival.get("performanceEvidence") or {},
                 "projectedPm25UgM3": arrival.get("point"),
                 # Deprecated 1.x alias now retains its literal baseline meaning.
                 "baselinePm25UgM3": (
@@ -10324,7 +11358,11 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
                     trail.get("persistenceAnchorEpoch")
                 ),
                 "modelFeatureAnchorPm25UgM3": trail.get("modelFeatureAnchor"),
+                "modelVersion": trail.get("modelVersion"),
+                "modelOutput": trail.get("modelOutput") or {},
+                "performanceEvidence": trail.get("performanceEvidence") or {},
                 "projectedMeanPm25UgM3": trail.get("point"),
+                "rideMinimumMaximumPm25UgM3": trail.get("rideExtrema") or {"available": False},
                 "projectedPeakPm25UgM3": trail.get("projectedPeak"),
                 # Deprecated 1.x alias now retains its literal baseline meaning.
                 "baselineMeanPm25UgM3": (
@@ -10503,10 +11541,14 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
                 },
             },
             "particleForecast": {
-                "provider": "Local PM ensemble / AirGradient + Open-Meteo / CAMS",
+                "provider": "Experimental session models with same-issue sensor reference; selected model identified per card",
                 "modelVersion": (result.get("windowPrediction") or {}).get("modelVersion"),
                 "modelsByWindow": (result.get("windowPrediction") or {}).get("modelsByWindow") or {},
-                "modelPointApplied": any((v.get("particleForecast") or {}).get("available") for v in (result.get("windows") or {}).values()),
+                "modelPointApplied": any((v.get("particleForecast") or {}).get("available")
+                    and (v.get("particleForecast") or {}).get("point") is not None
+                    and (v.get("particleForecast") or {}).get("pointRole") in
+                    {"experimental_window_mean", "experimental_model_output", "raw_model_output"}
+                    for v in (result.get("windows") or {}).values()),
                 "directComparisonEligible": False,
                 "fetchedAt": iso_from_epoch(
                     (air_quality_payload or {}).get("fetchedEpoch")
@@ -10528,8 +11570,10 @@ def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
                     ),
                 },
                 "validation": {
-                    "mode": "exact_lead_prequential_replay",
-                    "supported": False, "prospectivelyValidated": False,
+                    "mode": "as_issued_same_session_target_lead_and_local_issue_clock",
+                    "supported": any(((v.get("particleForecast") or {}).get("modelEvidence") or {}).get("supportSufficient")
+                                     for v in (result.get("windows") or {}).values()),
+                    "prospectivelyValidated": False,
                     "byWindow": {key: (value.get("particleForecast") or {}).get("modelEvidence") or {}
                                  for key, value in (result.get("windows") or {}).items()},
                 },
@@ -10647,6 +11691,31 @@ class Handler(BaseHTTPRequestHandler):
             self.send_data(204, "image/x-icon", b"")
             return
 
+        if route == rlcd_api.API_PATH:
+            now = int(time.time())
+            try:
+                with db() as conn:
+                    device_history = [dict(row) for row in conn.execute(
+                        "SELECT epoch,pm02,atmp,heatindex FROM readings "
+                        "WHERE epoch>=? AND epoch<=? ORDER BY epoch",
+                        (now - 6 * 3600, now),
+                    )]
+                payload = rlcd_api.build_payload(
+                    latest(), analysis(RIDE_API_ANALYSIS_DAYS), latest_weather_payload(now),
+                    now, dashboard_build=DASHBOARD_BUILD, history_rows=device_history,
+                )
+                status = 503 if payload["status"] == "unavailable" else 200
+            except Exception as error:
+                print(f"[RLCD API] {type(error).__name__}: {error}")
+                payload = rlcd_api.build_payload({}, {}, {}, now, dashboard_build=DASHBOARD_BUILD)
+                status = 503
+            self.send_data(
+                status, "application/json; charset=utf-8",
+                json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("utf-8"),
+                headers={"X-RLCD-Schema-Version": str(rlcd_api.SCHEMA_VERSION)},
+            )
+            return
+
         if route == "/api/openapi.json":
             revision = coach_api_contract_revision()
             self.send_versioned_json(
@@ -10705,6 +11774,28 @@ class Handler(BaseHTTPRequestHandler):
                 }, 500, headers=discovery_headers)
             return
 
+        if route == "/api/cycling-plan":
+            try:
+                start_epoch = int(qs["startEpoch"][0])
+                end_epoch = int(qs["endEpoch"][0])
+            except (KeyError, IndexError, ValueError):
+                self.send_json({"available": False, "reason": "Supply integer startEpoch and endEpoch for the tracked ride window."}, 400)
+                return
+            try:
+                result = cycling_plan_recheck(start_epoch, end_epoch)
+            except Exception as error:
+                print("[HTTP] Cycling window recheck error:", error)
+                self.send_json({"available": False, "reason": "The ride-window recheck could not be generated."}, 500)
+                return
+            self.send_json(result)
+            # Record only a prediction that was actually returned to a client.
+            if result.get("planId"):
+                try:
+                    cycling_window_live.record_issued_prediction(result, recorded_epoch=int(time.time()))
+                except Exception as error:
+                    print("[Cycling window forecast] Could not record recheck:", error)
+            return
+
         if route == "/api/current":
             r = latest()
             if r:
@@ -10747,12 +11838,12 @@ class Handler(BaseHTTPRequestHandler):
                     "SELECT epoch,pm02,pm10,atmp,rhum,heatindex FROM readings "
                     "WHERE epoch>=? ORDER BY epoch", (cutoff,)
                 ).fetchall()
-            latest_epoch = int(rows[-1]["epoch"]) if rows else int(time.time())
+            weather_reference_epoch = int(time.time())
             with weather_lock:
                 status = {key: value for key, value in weather_status.items()
                           if key not in ("forecast", "air_quality", "subang")}
             self.send_json({
-                "weather": weather_outlook(rows, latest_epoch),
+                "weather": weather_outlook(rows, weather_reference_epoch),
                 "collector": status,
                 "pollSeconds": WEATHER_POLL_SECONDS,
             })
@@ -10783,18 +11874,202 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error": "Not found"}, 404)
 
 
+def first_crossing_model_worker(stop_event=None):
+    """Refresh the cached event estimator independently of forecast requests."""
+    last_status = None
+    while stop_event is None or not stop_event.is_set():
+        try:
+            status = fresh_event_model.refresh_model(DB_PATH, int(time.time()))
+            summary = (status.get("trainingCutoffEpoch"), status.get("available"), status.get("reason"))
+            if summary != last_status:
+                print(f"[First-crossing model] {status.get('reason')} | "
+                      f"{status.get('trainingIssueCount', 0)} training cases | "
+                      f"cutoff {iso_from_epoch(status.get('trainingCutoffEpoch'))}")
+                last_status = summary
+        except Exception as error:
+            print(f"[First-crossing model] {type(error).__name__}: {error}")
+        if stop_event is None:
+            time.sleep(60)
+        else:
+            stop_event.wait(60)
+
+
+def arrival_change_model_worker(stop_event=None):
+    """Prepare the fixed arrival-change distribution outside forecast requests."""
+    last_status = None
+    while stop_event is None or not stop_event.is_set():
+        try:
+            status = arrival_change_model.refresh_model(DB_PATH, int(time.time()))
+            summary = (status.get("trainingCutoffEpoch"), status.get("available"), status.get("reason"))
+            if summary != last_status:
+                print(f"[Arrival change model] {summary}", flush=True)
+                last_status = summary
+        except Exception as error:
+            print(f"[Arrival change model] {type(error).__name__}: {error}", flush=True)
+        if stop_event is None:
+            time.sleep(60)
+        else:
+            stop_event.wait(60)
+
+
+def cycling_window_model_worker(stop_event=None):
+    """Fit completed prior-day ride windows outside the HTTP/forecast path."""
+    last_status = None
+    while stop_event is None or not stop_event.is_set():
+        try:
+            status = cycling_window_live.refresh_model(DB_PATH, int(time.time()))
+            summary = (status.get("trainingCutoffEpoch"), status.get("available"), status.get("reason"))
+            if summary != last_status:
+                print(f"[Cycling window model] {status.get('reason')} | "
+                      f"cutoff {iso_from_epoch(status.get('trainingCutoffEpoch'))}")
+                last_status = summary
+        except Exception as error:
+            print(f"[Cycling window model] {type(error).__name__}: {error}")
+        if stop_event is None:
+            time.sleep(60)
+        else:
+            stop_event.wait(60)
+
+
+def fresh_numeric_model_worker(stop_event=None):
+    """Refresh the fixed fresh-sequence numerical model outside serving."""
+    last_status = None
+    while stop_event is None or not stop_event.is_set():
+        try:
+            status = fresh_numeric_model.refresh_model(DB_PATH, issue_epoch=int(time.time()))
+            summary = (status.get("trainingCutoffEpoch"), status.get("available"), status.get("reason"))
+            if summary != last_status:
+                print(f"[Fresh numeric model] {summary}", flush=True)
+                last_status = summary
+        except Exception as error:
+            print(f"[Fresh numeric model] {type(error).__name__}: {error}", flush=True)
+        if stop_event is None:
+            time.sleep(60)
+        else:
+            stop_event.wait(60)
+
+
+def morning_model_worker(stop_event=None):
+    """Prepare the primary Morning estimator independently of diagnostic fits."""
+    last_status = None
+    while stop_event is None or not stop_event.is_set():
+        try:
+            status = weather_session_forecast.refresh_model(DB_PATH, int(time.time()))
+            summary = (status.get("trainingCutoffEpoch"), status.get("state"), status.get("reason"))
+            if summary != last_status:
+                print(f"[Morning model] {summary}", flush=True)
+                last_status = summary
+        except Exception as error:
+            print(f"[Morning model] {type(error).__name__}: {error}", flush=True)
+        if stop_event is None:
+            time.sleep(60)
+        else:
+            stop_event.wait(60)
+
+
+def near_diagnostic_model_worker(stop_event=None):
+    """Refresh optional diagnostic fits outside the primary publication path."""
+    while stop_event is None or not stop_event.is_set():
+        retry_soon = False
+        for module in (near_term_hazard, short_horizon_change):
+            try:
+                status = module.refresh_model(DB_PATH, int(time.time()))
+                if status.get("state") == "unavailable" and "locked" in status.get("reason", "").lower():
+                    retry_soon = True
+            except Exception as error:
+                retry_soon = True
+                print(f"[Near diagnostic model] {type(error).__name__}: {error}")
+        delay = 60 if retry_soon else 3600
+        if stop_event is None:
+            time.sleep(delay)
+        else:
+            stop_event.wait(delay)
+
+
+def patchtst_research_worker(stop_event=None):
+    """Collect receipt-aware cases and refresh the isolated daily runtime."""
+    import patchtst_live_runtime
+    previous_runtime = previous_status = None
+    # Its frozen reader/worker prerequisites changed during the receipt audit.
+    # Preserve that experiment's artifacts; resume only under a new explicitly
+    # sealed input recipe, rather than changing its old provenance checks.
+    print("[Afternoon wind SVR research] suspended: original frozen source prerequisites changed; no receipt-cohort revision qualified", flush=True)
+    while stop_event is None or not stop_event.is_set():
+        # Load a completed artifact independently: a later collection or fit
+        # failure must not prevent an already valid checkpoint becoming ready.
+        try:
+            readiness = patchtst_session_forecast.prepare_runtime(
+                patchtst_live_runtime.get_cache(), int(time.time()))
+            if readiness != previous_runtime:
+                print(f"[PatchTST runtime] {readiness}", flush=True)
+                previous_runtime = readiness
+        except Exception as error:
+            print(f"[PatchTST runtime] {type(error).__name__}: {error}", flush=True)
+        try:
+            status = patchtst_live_runtime.background_step(DB_PATH)
+            summary = (status.get("state"), status.get("trainingCutoffEpoch"),
+                       status.get("reason"))
+            if summary != previous_status:
+                print(f"[PatchTST research] {summary}", flush=True)
+                previous_status = summary
+        except Exception as error:
+            print(f"[PatchTST research] {type(error).__name__}: {error}", flush=True)
+        if stop_event is None:
+            time.sleep(30)
+        else:
+            stop_event.wait(30)
+
+
+def radar_shadow_worker(stop_event=None):
+    """Collect bounded radar observations; never feed the PM forecast."""
+    while stop_event is None or not stop_event.is_set():
+        try:
+            record = storm_precursor_inputs.poll_once(RADAR_SHADOW_PATH)
+            print(f"[Radar shadow] {record['status']} | "
+                  f"latest frame {record['latest_frame_age_seconds']:.0f}s old")
+            delay = radar_shadow.POLL_INTERVAL_SECONDS
+        except radar_shadow.PollTooSoon:
+            # A process restart must respect the previous attempt's rate limit.
+            delay = 60
+        except Exception as error:
+            print(f"[Radar shadow] {type(error).__name__}: {error}")
+            delay = radar_shadow.POLL_INTERVAL_SECONDS
+        if stop_event is None:
+            time.sleep(delay)
+        else:
+            stop_event.wait(delay)
+
+
 if __name__ == "__main__":
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
 
     # Bind first so a duplicate instance exits before starting any collectors.
     server = ThreadingHTTPServer((HOST, PORT), Handler)
+    discovery = (lan_discovery.start_discovery(server.server_address[1])
+                 if os.environ.get("BUKIT_KIARA_DISCOVERY", "0") == "1" else None)
 
     t = threading.Thread(target=collector, daemon=True)
     t.start()
     weather_thread = threading.Thread(target=weather_collector, daemon=True)
     weather_thread.start()
     threading.Thread(target=haze_transport.collector, args=(DB_PATH,), daemon=True).start()
+    threading.Thread(
+        target=regional_pm_inputs.collector,
+        args=(DB_PATH, (WEATHER_LATITUDE, WEATHER_LONGITUDE)), daemon=True,
+    ).start()
+    threading.Thread(
+        target=neighbor_pm_inputs.collector, daemon=True, name="neighbor-pm-collector",
+    ).start()
+    threading.Thread(target=first_crossing_model_worker, daemon=True, name="first-crossing-model").start()
+    threading.Thread(target=arrival_change_model_worker, daemon=True, name="arrival-change-model").start()
+    threading.Thread(target=fresh_numeric_model_worker, daemon=True, name="fresh-numeric-model").start()
+    threading.Thread(target=cycling_window_model_worker, daemon=True, name="cycling-window-model").start()
+    threading.Thread(target=morning_model_worker, daemon=True, name="morning-model").start()
+    threading.Thread(target=near_diagnostic_model_worker, daemon=True, name="near-diagnostic-models").start()
     threading.Thread(target=analysis_worker, daemon=True).start()
+    threading.Thread(target=patchtst_research_worker, daemon=True, name="patchtst-research").start()
+    threading.Thread(target=radar_shadow_worker, daemon=True).start()
 
     url = f"http://localhost:{PORT}/"
 
@@ -10806,6 +12081,7 @@ if __name__ == "__main__":
     print(f"History DB: {DB_PATH}")
     print("Sampling  : every 3 minutes")
     print("Weather   : Open-Meteo every 15 min; CAMS particles hourly; Subang reference")
+    print("Research  : regional CAMS PM inputs hourly; forecasts under evaluation")
     print("Keep this window open. Press Ctrl+C to stop.")
     print("=" * 66)
 
@@ -10817,4 +12093,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nStopping dashboard...")
     finally:
+        if discovery is not None:
+            discovery.stop()
         server.server_close()

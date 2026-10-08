@@ -302,20 +302,22 @@ def evidence(records, cutoff, start_issue=None, end_issue=None):
     return result
 
 
-def _evidence_live(records, issue):
+def _evidence_live(records, issue, wet_forecast):
     known = [r for r in records if r["actual"] is not None and
              r["completeAfterEpoch"] < issue and r["issuedEpoch"] >= issue - 7 * 86400 and
-             r.get("wetForecast", False)]
+             bool(r.get("wetForecast", False)) == wet_forecast]
     full = evidence(known, issue)
     summary = {k: full[k] for k in ("overall", "highRain", "highRainClearing",
                                     "highRainNoClearing", "highRainIncrease",
                                     "nonoverlapping", "cohortDayBalanced")}
     errors = np.array([r["actual"] - r["prediction"] for r in known])
     quantiles = np.quantile(errors, [.1, .9]) if len(errors) >= 12 else None
+    cohort = "wet_forecast" if wet_forecast else "dry_forecast"
     summary.update({"calibrated": False, "residualCount": len(errors),
                     "count": len(errors), "distinctDays": len({r["day"] for r in known}),
                     "independentOriginCount": summary["nonoverlapping"]["count"],
-                    "residualPolicy": "identical_rain_ridge_wet_forecast_issues_same_issue_offset_seven_completed_days",
+                    "residualCohort": cohort,
+                    "residualPolicy": f"identical_rain_ridge_{cohort}_issues_same_issue_offset_seven_completed_days",
                     "residualLatestOutcomeCompleteEpoch": max((r["completeAfterEpoch"] for r in known), default=None),
                     "limitation": "Experimental retrospective association; overlapping outcomes and few rainy days limit evidence. Rain does not guarantee PM clearing."})
     return summary, quantiles
@@ -370,7 +372,7 @@ def predict_nearterm(db_path, rows, issue_epoch):
         if live is None:
             output[target_key] = unavailable("insufficient_completed_weather_training")
             continue
-        validation, quantiles = _evidence_live(records[horizon], issue)
+        validation, quantiles = _evidence_live(records[horizon], issue, live["wetForecast"])
         point = live["prediction"]
         closed_reference = float(frame.pm02.iloc[-1])
         fresh_applied = live["freshReferenceCount"] > 0
@@ -388,7 +390,8 @@ def predict_nearterm(db_path, rows, issue_epoch):
             "wetForecast": live["wetForecast"],
             "rawRangeLow": max(0., point + float(quantiles[0])) if quantiles is not None else None,
             "rawRangeHigh": max(0., point + float(quantiles[1])) if quantiles is not None else None,
-            "rangeMeaning": "q10_q90_past_same_policy_forecast_residuals_not_rain_probability_or_trail_min_max",
+            "rangeMeaning": "q10_q90_past_same_wet_dry_cohort_forecast_residuals_not_rain_probability_or_trail_min_max",
+            "rangePolicyVersion": "same_wet_dry_cohort_residual_v2",
             "forecastClock": clock.metadata(), "featureAnchorEpoch": anchor,
             "modelFeatureAnchor": closed_reference,
             "persistenceAnchorEpoch": live["freshReferenceEpoch"] or anchor,
@@ -490,6 +493,7 @@ def run_study(db_path):
     frame = _frame(rows, asof)
     runs = weather.load_runs(db_path, asof)
     holdout = int(pd.Timestamp("2026-09-09", tz=TZ).timestamp())
+    sep10 = int(pd.Timestamp("2026-09-10", tz=TZ).timestamp())
     result = {"modelVersion": MODEL_VERSION, "parameters": PARAMETERS,
               "sourcePath": str(db_path), "sourceAsOfEpoch": asof,
               "sensorRows": len(rows), "featureColumns": {h: _columns(h) for h in ("arrival", "mean")},
@@ -503,7 +507,8 @@ def run_study(db_path):
         block = {}
         for horizon, items in records.items():
             block[horizon] = {"preSep9": evidence(items, holdout, end_issue=holdout),
-                              "completedSep9": evidence(items, asof, start_issue=holdout),
+                              "completedSep9": evidence(items, min(asof, sep10),
+                                                        start_issue=holdout, end_issue=sep10),
                               "allCompleted": evidence(items, asof), "records": items}
         block["computeSeconds"] = time.perf_counter() - start
         result["offsets"][str(lag)] = block

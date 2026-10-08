@@ -1,10 +1,9 @@
-"""Scoped, read-only experimental afternoon direction forecast.
+"""Read-only shadow evaluation of the afternoon direction candidate.
 
-Only morning issues from 07:00:00 through 08:00:00 Asia/Kuala_Lumpur may replace
-the same day's exact 14:00--16:00 session. Historical origins remain hourly
-at :30; the live query uses its actual issue and exact target clocks. All
-training targets, including their last intersected bucket, must be complete.
-No issue archives are written here. The caller owns publication/archiving.
+Eligible 07:00--08:00 issues target that day's 14:00--16:00 session. Historical
+issues use the same morning scope and exact afternoon target clock. The
+candidate never replaces the selected session estimate; its diagnostics can
+be archived alongside the issue for paired prospective evaluation.
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ from forecast_freshness import references, VERSION as FRESHNESS_VERSION
 
 
 MODEL_VERSION = "afternoon_direction_hgb_v1"
-SELECTION_METADATA_VERSION = "afternoon_scope_selection_v1"
 SOURCE = "experimental_afternoon_direction_model"
 METHOD = "Experimental afternoon direction model · fixed 40-iteration classifier"
 FORECAST_STATE = "experimental_afternoon_direction_mean"
@@ -38,21 +36,15 @@ SCOPE = {
     "targetStartLocal": "14:00:00",
     "targetEndLocal": "16:00:00",
     "sameDayOnly": True,
-    "historicalOriginMinute": 30,
-    "reviewedIssueLocal": "07:30:00",
+    "historicalIssueScope": "07:00:00_through_08:00:00",
+    "historicalOriginMinutes": [0, 15, 30, 45],
+    "previouslyReviewedIssueLocal": "07:30:00",
 }
 RETROSPECTIVE_REVIEW = {
-    "status": "exploratory_research_user_accepted_experimental",
-    "reviewedDays": 17,
-    "modelMaeUgM3": 22.216,
-    "comparatorMaeUgM3": 25.841,
-    "comparator": "incumbent_current_model",
-    "comparisonTarget": "same_day_14_to_16_mean_issued_at_07_30",
-    "latestReviewedDay": "2026-09-20",
-    "latestReviewedDayImproved": False,
-    "latestDayFailureAcceptedAsExperimental": True,
+    "status": "previous_review_superseded_by_clock_alignment_fix",
+    "previousReviewNotApplicableToAlignedCandidate": True,
     "prospectivelyValidated": False,
-    "limitations": "Exploratory reused historical outcomes; latest reviewed day failed; no prospective accuracy claim.",
+    "limitations": "The earlier review used historical issue and target clocks unlike the live scope. The aligned candidate remains shadow only.",
 }
 
 
@@ -77,6 +69,31 @@ def _metadata_copy(value):
     if isinstance(value, np.bool_):
         return bool(value)
     return copy.deepcopy(value)
+
+
+def _with_shadow(value, issue, start, end, attempt):
+    """Keep the selected estimator and its provenance intact."""
+    if not isinstance(value, dict):
+        return value
+    result = dict(value)
+    diagnostic = {
+        "applied": False,
+        "usedForDecision": False,
+        "appliedToPrimaryForecast": False,
+        "status": "shadow_only",
+        "modelVersion": MODEL_VERSION,
+        "forecastIssuedEpoch": issue,
+        "targetStartEpoch": start,
+        "targetEndEpoch": end,
+        "scope": dict(SCOPE),
+        "prospectivelyValidated": False,
+        "attempt": _metadata_copy(attempt),
+    }
+    # A caller may already have selected a direction record. Do not erase
+    # that record or its provenance while attaching a separate trial.
+    key = "directionShadow" if (result.get("directionalModel") or {}).get("applied") else "directionalModel"
+    result[key] = diagnostic
+    return result
 
 
 def _applicable_windows(windows, issue):
@@ -104,79 +121,6 @@ def _same_day_afternoon(windows, issue):
     return start, end
 
 
-def _with_selection(value, issue, start, end, reason, attempt=None):
-    """Attach issue-bound provenance without changing a forecast or its clocks.
-
-    Scheduled transitions are policy metadata, never an invented observation
-    of a previous issued forecast. There is no delivery-time clock or history
-    cache here; a cached record keeps its original forecast issue and model.
-    """
-    if not isinstance(value, dict):
-        return value
-    result = dict(value)
-    local = datetime.fromtimestamp(issue, KL)
-    scope_start = int(local.replace(hour=7, minute=0, second=0, microsecond=0).timestamp())
-    scope_end = int(local.replace(hour=8, minute=0, second=0, microsecond=0).timestamp())
-    ordinary_start = scope_end + 1  # The public issue API accepts whole seconds.
-    experimental_policy = "experimental_morning_direction"
-    ordinary_policy = "ordinary_session"
-    selected_policy = experimental_policy if value.get("modelVersion") == MODEL_VERSION else ordinary_policy
-    forecast_issue = _number(value.get("forecastIssuedEpoch"))
-    if forecast_issue is None:
-        forecast_issue = _number(value.get("forecastedAtEpoch"))
-    issue_state = ("unknown" if forecast_issue is None else "same_issue" if forecast_issue == issue
-                   else "earlier_issue" if forecast_issue < issue else "future_issue")
-    retained = issue_state == "earlier_issue"
-    policy_reason = reason
-    if issue_state == "future_issue":
-        reason = "supplied_forecast_has_future_issue"
-    elif selected_policy == experimental_policy and reason != "inside_approved_morning_scope":
-        reason = "retained_previously_issued_experimental_forecast" if retained else "supplied_experimental_forecast_not_reissued"
-    messages = {
-        "inside_approved_morning_scope": "Experimental morning direction model selected for this issue.",
-        "morning_scope_not_started": "Ordinary session model selected before the experimental morning window.",
-        "morning_scope_ended": "Ordinary session model selected after the experimental morning window ended.",
-        "fresh_sensor_reference_unavailable": "Existing session forecast retained because a fresh sensor reference is unavailable.",
-        "training_or_query_unavailable": "Existing session forecast retained because the experimental training or query is unavailable.",
-        "required_sensor_history_unavailable": "Existing session forecast retained because sensor history is unavailable.",
-        "qualified_closed_reference_unavailable": "Existing session forecast retained because the required closed sensor reference is unavailable.",
-        "required_query_reference_unavailable": "Existing session forecast retained because the experimental query reference is unavailable.",
-        "insufficient_training_rows": "Existing session forecast retained because too few completed training targets are available.",
-        "insufficient_training_classes": "Existing session forecast retained because fewer than two training direction classes are available.",
-        "fit_or_prediction_failure": "Existing session forecast retained because the experimental model fit or prediction failed.",
-        "invalid_experimental_prediction": "Existing session forecast retained because the experimental prediction is invalid.",
-        "experimental_error": "Existing session forecast retained because the experimental calculation failed.",
-        "retained_previously_issued_experimental_forecast": "Earlier experimental forecast retained with its original issue time; no new forecast was issued here.",
-        "supplied_experimental_forecast_not_reissued": "Supplied experimental forecast preserved; it was not recomputed for this selection.",
-        "supplied_forecast_has_future_issue": "Supplied forecast is dated after this selection issue; it is not a valid as-of forecast for this issue.",
-    }
-    entry = {"atEpoch": scope_start, "fromPolicy": ordinary_policy, "toPolicy": experimental_policy,
-             "basis": "scheduled_scope_boundary", "priorForecastObserved": False}
-    exit_transition = {"atEpoch": ordinary_start, "fromPolicy": experimental_policy, "toPolicy": ordinary_policy,
-                       "lastExperimentalIssueEpoch": scope_end,
-                       "basis": "scheduled_scope_boundary", "priorForecastObserved": False}
-    previous = None if issue < scope_start else entry if issue <= scope_end else exit_transition
-    following = entry if issue < scope_start else exit_transition if issue <= scope_end else None
-    result["modelSelection"] = {
-        "version": SELECTION_METADATA_VERSION,
-        "numericalPolicyIdentifier": value.get("modelVersion"),
-        "selectedModelVersion": value.get("modelVersion"), "selectedPolicy": selected_policy,
-        "selectionReason": reason, "selectionReasonText": messages[reason],
-        "policyEligibilityReason": policy_reason, "selectionIssueEpoch": issue,
-        "forecastIssuedEpoch": forecast_issue, "forecastIssueState": issue_state,
-        "retainedIssuedForecast": retained, "targetStartEpoch": start, "targetEndEpoch": end,
-        "scope": {**SCOPE, "issueStartEpoch": scope_start, "lastExperimentalIssueEpoch": scope_end,
-                  "ordinaryPolicyStartsEpoch": ordinary_start, "issueEndInclusive": True},
-        "previousScheduledTransition": previous, "nextScheduledTransition": following,
-        "handoff": {"lastExperimentalIssueEpoch": scope_end, "ordinaryPolicyStartsEpoch": ordinary_start,
-                    "mayChangePointWithoutNewObservations": True,
-                    "interpretation": "A point change at this boundary can reflect the selected estimator; it does not by itself indicate a physical PM2.5 change."},
-    }
-    if attempt is not None:
-        result["modelSelection"]["experimentalAttempt"] = _metadata_copy(attempt)
-    return result
-
-
 def _training_and_query(db_path, rows, issue, start, end, *, preparation_diagnostics=None):
     def unavailable(reason, **support):
         if preparation_diagnostics is not None:
@@ -193,19 +137,32 @@ def _training_and_query(db_path, rows, issue, start, end, *, preparation_diagnos
     lag = issue - origin_epoch
     lead_minutes = (start - issue) / 60.0
     duration_minutes = (end - start) / 60.0
+    target_clock = (14, 0, 16, 0)
+    # At each historical quarter-hour, issue with the same lag into the
+    # current bucket as the live call. The 08:00 origin is eligible only when
+    # the actual issue is exactly at the bucket boundary.
+    historical_origins = frame.index[
+        ((frame.index.hour == 7) & frame.index.minute.isin((0, 15, 30, 45)))
+        | ((frame.index.hour == 8) & (frame.index.minute == 0) & (lag == 0))]
     training = features.design(frame, rows, cams, weather, issue, lead_minutes,
-                               duration_minutes, lag_seconds=0, origin_minute=30)
+                               duration_minutes, lag_seconds=lag,
+                               only_origins=historical_origins,
+                               target_clock=target_clock)
     query = features.design(frame, rows, cams, weather, issue, lead_minutes,
                             duration_minutes, lag_seconds=lag,
-                            only_origins=pd.DatetimeIndex([origin]))
+                            only_origins=pd.DatetimeIndex([origin]),
+                            target_clock=target_clock)
     if not bool(query["valid"][0]):
         return unavailable("required_query_reference_unavailable")
     usable = (training["valid"] & np.isfinite(training["labels"])
               & (training["complete"] <= issue) & (training["issues"] < issue)
               & (training["issues"] >= issue - 14 * 86400))
     if int(usable.sum()) < frozen_model.MIN_TRAINING_ROWS:
-        return unavailable("insufficient_training_rows", trainingCount=int(usable.sum()),
-                           minimumTrainingCount=frozen_model.MIN_TRAINING_ROWS)
+        return unavailable("insufficient_aligned_training_rows", trainingCount=int(usable.sum()),
+                           trainingDistinctDays=int(training["origins"][usable].normalize().nunique()),
+                           minimumTrainingCount=frozen_model.MIN_TRAINING_ROWS,
+                           historicalIssueScope=SCOPE["historicalIssueScope"],
+                           targetClock="same_day_14_to_16")
     changes = training["labels"][usable] - training["x"].loc[usable, "fresh"].to_numpy(dtype=float)
     threshold = frozen_model.EVENT_CHANGE_THRESHOLD
     directions = np.where(changes >= threshold, 1, np.where(changes <= -threshold, -1, 0))
@@ -221,7 +178,7 @@ def _replacement(old, training, query, usable, issue, origin, lag, start, end, e
     fresh = float(query_row["fresh"])
     details = frozen_model.predict_details(
         training["x"].loc[usable].copy(), training["labels"][usable].copy(), query_row.copy(),
-        training["issues"][usable].copy(), issue, "session390")
+        training["issues"][usable].copy(), issue, "same_day_afternoon_14_16")
     if decision_audit is not None:
         decision_audit.update(state="evaluated", reason=details.get("decisionReason"),
                               diagnostics=_metadata_copy(details))
@@ -248,9 +205,12 @@ def _replacement(old, training, query, usable, issue, origin, lag, start, end, e
         "trainingLatestCompleteEpoch": int(training["complete"][usable].max()),
         "trainingEarliestIssueEpoch": int(training["issues"][usable].min()),
         "trainingLatestIssueEpoch": int(training["issues"][usable].max()),
-        "historicalOriginMinute": 30,
-        "trainingIssueLagSeconds": 0,
+        "historicalIssueScope": SCOPE["historicalIssueScope"],
+        "historicalOriginMinutes": SCOPE["historicalOriginMinutes"],
+        "trainingIssueLagSeconds": lag,
         "queryIssueLagSeconds": lag,
+        "historicalTargetClock": "same_day_14_to_16",
+        "trainingDistinctDays": int(training["origins"][usable].normalize().nunique()),
         "featureVersion": features.FEATURE_VERSION,
         "targetCoveragePolicy": "all_intersected_15_minute_buckets_complete_and_gap_qualified",
     }
@@ -313,14 +273,7 @@ def _replacement(old, training, query, usable, issue, origin, lag, start, end, e
 
 
 def apply_experimental_afternoon(db_path, rows, windows, issue, estimates) -> dict:
-    """Replace only eligible early-afternoon records; failures retain estimates.
-
-    Morning and other targets retain their original objects. The exact named
-    same-day afternoon record receives additive issue-bound selection metadata
-    on all paths. Its point and original issue/target clocks are preserved on
-    fallbacks. No input is mutated. Finite recent PM and the expected closed
-    bucket are both required for the experimental calculation.
-    """
+    """Attach an as-issued shadow attempt; never change the selected point."""
     result = dict(estimates)
     number = _number(issue)
     if number is None or number != int(number):
@@ -334,13 +287,13 @@ def apply_experimental_afternoon(db_path, rows, windows, issue, estimates) -> di
         start, end = target
         def retain(reason, attempt=None):
             if "afternoon" in estimates:
-                result["afternoon"] = _with_selection(estimates["afternoon"], issue, start, end, reason, attempt)
+                result["afternoon"] = _with_shadow(
+                    estimates["afternoon"], issue, start, end,
+                    attempt or {"state": "not_evaluated", "reason": reason})
             return result
         eligible = _applicable_windows(windows, issue)
         if not eligible:
-            local = datetime.fromtimestamp(issue, KL)
-            return retain("morning_scope_not_started" if local.hour < 7 else "morning_scope_ended",
-                          {"state": "not_evaluated", "reason": "outside_approved_morning_scope"})
+            return result
         origin = issue // 900 * 900
         lag = issue - origin
         recent, _, counts = references(rows, [origin], lag, issue)
@@ -362,14 +315,21 @@ def apply_experimental_afternoon(db_path, rows, windows, issue, estimates) -> di
             reason = ("fit_or_prediction_failure" if decision.get("reason") == "fit_or_prediction_failure"
                       else "invalid_experimental_prediction")
             return retain(reason, decision)
-        value["computeSeconds"] = round(time.perf_counter() - started, 4)
-        result["afternoon"] = _with_selection(value, issue, start, end, "inside_approved_morning_scope")
+        decision.update(
+            state="evaluated", reason="shadow_candidate_available",
+            candidateMeanPm25UgM3=value["mean"],
+            incumbentMeanPm25UgM3=(estimates.get("afternoon") or {}).get("mean"),
+            modelEvidence=value["modelEvidence"],
+            computeSeconds=round(time.perf_counter() - started, 4),
+        )
+        result["afternoon"] = _with_shadow(
+            estimates["afternoon"], issue, start, end, decision)
         return result
     except Exception as error:
         _LOGGER.warning("Experimental afternoon fallback at issue %s: %s", issue, error)
         result = dict(estimates)
         if target is not None and "afternoon" in estimates:
-            result["afternoon"] = _with_selection(
-                estimates["afternoon"], issue, *target, "experimental_error",
+            result["afternoon"] = _with_shadow(
+                estimates["afternoon"], issue, *target,
                 {"state": "failed", "reason": "experimental_error", "errorType": type(error).__name__})
         return result

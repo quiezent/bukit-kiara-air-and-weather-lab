@@ -10,7 +10,7 @@ For code, run the portable tests, preserve the API's original forecast timestamp
 
 For AI-assisted work, disclose the role of the agent, the evidence it actually checked and the remaining uncertainty. A fresh context can reduce inherited framing, but multiple agents can share blind spots. Debate is useful; measured outcomes decide.
 
-Original contributions to `firmware/esp32-rlcd` use that directory's Apache-2.0 license; preserve its third-party notices. No contribution license or contributor agreement has been selected for the initial server/content snapshot. Do not submit material you lack permission to share.
+Original contributions to `firmware/esp32-rlcd` use that directory's Apache-2.0 license; preserve its third-party notices. Original forecasting application and associated test source use [Apache-2.0](app/LICENSE.md). Contributions to either code component should preserve its licensing scope. Journal prose, other documentation, photographs and upstream data retain their separate terms. Do not submit material you lack permission to share.
 
 ## Shared project maintenance
 
@@ -22,7 +22,7 @@ At the owner's request, the forecasting-server and ESP32-device Codex workstream
 | ESP32 device | Firmware, display, speech recognition, readouts, audio, hardware integration and device evidence |
 | Shared | Server/device contract, end-to-end meaning, README, publication scope and project direction |
 
-The primary objective is advance warning of substantial PM2.5 falls or rises before the rider starts preparing. The +90-minute value supports the arrival judgment; the following two-hour forecast provides ride context. Learned ≥20/≥40 arrival-change probabilities are a modeling requirement, not an assertion that those heads are already deployed.
+The primary objective is advance warning of substantial PM2.5 falls or rises before the rider starts preparing. The +90-minute value supports the arrival judgment; the following two-hour forecast provides ride context. The October 8 source implements learned ≥20/≥40 arrival-change probabilities. Their implementation does not establish reliable advance warning; evaluate misses, false calls and useful lead time against original issued forecasts.
 
 For changes crossing the interface, coordinate model/output semantics, API versions, units, issue/reference/target clocks, unavailable or stale data and the device's payload budget. Verify affected display and spoken behavior against the same issued server data. A presentation change must preserve the model output's meaning; it must not manufacture a probability or silently substitute a different PM2.5 number.
 
