@@ -1,0 +1,97 @@
+{
+  "documented_at": "2026-10-08",
+  "timezone": "Asia/Kuala_Lumpur",
+  "role": "Curated audit summary of the local ESP32 deployment; raw local records are not published.",
+  "hardware": {
+    "product": "Waveshare ESP32-S3-RLCD-4.2",
+    "landscape_pixels": [
+      400,
+      300
+    ],
+    "flash_bytes": 16777216,
+    "psram_bytes": 8388608
+  },
+  "current_release": {
+    "firmware": "weather-dashboard-24-display-text",
+    "verified_at_utc": "2026-10-08T08:50:14.719497+00:00",
+    "application_bytes": 8108384,
+    "application_sha256": "5a407345fe2360f46b6d9dd76b04e64ee87df07f83c4b4052cb0450f33bfd8f9",
+    "arduino_core": "3.3.12",
+    "esp_idf": "5.5.5",
+    "esp_sr": "2.5.3",
+    "build_warnings": 0,
+    "dashboard_checks": 55,
+    "flash_validation_checks": 5,
+    "flashed_hash_checks": 4,
+    "three_framebuffers_visually_reviewed": true,
+    "audio_playback_retested": false,
+    "audio_model_and_clips_unchanged_from_v23": true
+  },
+  "preceding_audio_verification": {
+    "firmware": "weather-dashboard-23-server-api",
+    "verified_at_utc": "2026-10-08T07:07:12.496002+00:00",
+    "dashboard_checks": 55,
+    "all_page_playback_and_recovery_checks": 61,
+    "pages_tested": 3,
+    "usb_console_bytes_left_unread": 13245,
+    "both_microphones_recovered": true
+  },
+  "voice": {
+    "recognition_model": "mn7_en",
+    "vad_model": "vadnet1_medium",
+    "personal_voice_training": false,
+    "wake_phrase_required": false,
+    "spoken_phrases": [
+      "next",
+      "next page",
+      "back",
+      "read info",
+      "read page",
+      "read",
+      "overview",
+      "page one",
+      "forecast",
+      "page two",
+      "graph",
+      "page three"
+    ],
+    "internal_pronunciation_registrations": 17,
+    "detector_and_application_threshold": 0.8,
+    "microphone_slots": [
+      0,
+      2
+    ],
+    "afe_bss_configured": true,
+    "recognition_audio_source": "original_first_microphone",
+    "enhanced_bss_output_selected_for_recognition": false,
+    "aec_enabled": false,
+    "separate_noise_suppression_enabled": false,
+    "nsnet2_enabled": false
+  },
+  "readback": {
+    "mechanism": "Finite prerecorded number/phrase playlist selected from a page snapshot",
+    "offline_synthesis_voice": "Microsoft David Desktop",
+    "clip_count": 120,
+    "sample_rate_hz": 16000,
+    "bits_per_sample": 16,
+    "channels": 1,
+    "live_neural_tts_on_board": false,
+    "cloud_speech_service_used": false,
+    "physical_key_action": "read_current_page",
+    "physical_boot_action": "next_page"
+  },
+  "data_semantics": {
+    "weather_forecasting_runs_on": "separately maintained local server",
+    "ride_range": "Predicted window minimum/maximum at 15-minute resolution",
+    "dynamic_screen_momentum_field": "forecast.near90.first20.display_text",
+    "indoor_ranges": "since device restart",
+    "battery_percentage": "coarse voltage-based estimate",
+    "charging_telemetry_supported": false
+  },
+  "limits": [
+    "These counts establish the stated software/driver/UI behavior, not measured acoustic accuracy or model forecast skill.",
+    "Human audibility feedback informed speaker volume; every release was not separately listened to.",
+    "Actual discovery/rediscovery was checked, but a real DHCP lease change was not forced.",
+    "The runnable public server is still the separately dated September 21 snapshot; current firmware and model/audio assets are not included."
+  ]
+}
