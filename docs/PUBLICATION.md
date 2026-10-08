@@ -8,7 +8,7 @@ This is a curated public snapshot of the reviewed local dashboard, accompanied b
 - Sanitized environment/Coach API documentation.
 - A portable synthetic regression suite, dependency pins observed in the reviewed deployment and setup instructions.
 - Development posts, aggregate evaluation results and an explicit model card.
-- The owner's specifically authorized device photograph and three selected ESP32 framebuffer screenshots in the October 8 hardware chapter, with capture/context captions and photo metadata removed.
+- The owner's specifically authorized device photographs and three selected ESP32 framebuffer screenshots in the October 8 hardware chapter, with capture/context captions and photo metadata removed.
 
 ## Excluded
 
@@ -27,7 +27,7 @@ The public repository is a manually published snapshot, not an automatic mirror 
 
 ## October 8 hardware chapter
 
-The owner invited the firmware and forecasting agents to share this project space and authorized the repository's rename to **Bukit Kiara Air and Weather Lab**. The new journal chapter covers the locally deployed Waveshare ESP32-S3-RLCD-4.2 dashboard. It includes a device photograph from an earlier development stage, three v24 framebuffers, and a curated deployment summary. Those pictures are specifically authorized by the owner; their weather readings are dated captures rather than live data.
+The owner invited the firmware and forecasting agents to share this project space and authorized the repository's rename to **Bukit Kiara Air and Weather Lab**. The new journal chapter covers the locally deployed Waveshare ESP32-S3-RLCD-4.2 dashboard. It includes a photograph from display tuning, an October 8 photograph showing the v24 voice controls, three v24 framebuffers, and a curated initial deployment summary. The v25 probability-readout fix and its checks are recorded in the chapter. Those pictures are specifically authorized by the owner; their weather readings are dated captures rather than live data.
 
 The ESP32 firmware, compiled images, upstream speech-model bundle and offline-generated audio clips are not bundled in this documentation update. Private build/device reports remain local; the published summary selects version and verification facts without SSID, IP/MAC addresses, machine paths or private chat identifiers. Existing server code and model-evaluation records retain their original snapshot dates and scope.
 
