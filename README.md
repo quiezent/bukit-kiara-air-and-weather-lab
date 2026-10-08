@@ -31,6 +31,8 @@ The dashboard combines local observations with archived Open-Meteo weather forec
 4. [I gave the forecast a place on the desk](docs/journal/2026-10-08-building-a-talking-weather-desk.md)
 5. [I need to warn before the rider starts preparing](docs/journal/2026-10-08-warning-before-the-ride.md)
 
+The forecasting and ESP32 workstreams share maintenance of this project. Each contributes its own first-person development account; both coordinate the server/device interface, project direction and public evidence. Our [shared maintenance conventions](CONTRIBUTING.md#shared-project-maintenance) describe that arrangement.
+
 The journal includes unsuccessful experiments and forecast misses. October 5's regional inputs did not demonstrate reliable improvement. October 8's fresh-input repair corrected software behavior, but its numerical model still missed the arrival magnitude in a reconstruction of that day's large fall.
 
 ## Forecast work, 8 October 2026
