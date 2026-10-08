@@ -12,6 +12,7 @@
 #include "ReadoutPlayer.h"
 #include "ButtonInput.h"
 #include "PageReadout.h"
+#include "ArrivalChange.h"
 
 // Waveshare's ST7305 driver, using its documented SPI pin assignments.
 static ST7305_U8g2 lcd(11, 12, 5, 40, 41);
@@ -144,7 +145,7 @@ static String statusJson() {
   const bool connected = WiFi.status() == WL_CONNECTED;
   const uint32_t batteryAdcMv = readBatteryAdcMillivolts();
   batteryVoltage = batteryAdcMv * 3.0f / 1000.0f;
-  String out = "{\"firmware\":\"weather-dashboard-25-public.1\",\"connected\":";
+  String out = "{\"firmware\":\"weather-dashboard-26-public.1\",\"connected\":";
   out += connected ? "true" : "false";
   out += ",\"ssid\":" + jsonString(ssid);
   out += ",\"ip\":" + jsonString(connected ? WiFi.localIP().toString() : "");
@@ -188,6 +189,22 @@ static String statusJson() {
   out += ",\"first20_status_text\":" + jsonString(dashboardFirst20Status(context));
   uint32_t first20Issued = weatherDocument["forecast"]["issued_epoch"].as<uint32_t>();
   out += ",\"first20_issued_epoch\":" + (first20Issued ? String(first20Issued) : String("null"));
+  out += ",\"current_status_text\":" + jsonString(dashboardCurrentStatus(context));
+  out += ",\"current_status_observed_epoch\":" + String(weatherDocument["current"]["observed_epoch"].as<uint32_t>());
+  const ArrivalChangeResult arrival = dashboardForecastAvailable(context)
+      ? decodeArrivalChange(weatherDocument["forecast"]["near90"], first20Issued, dashboardNow(context))
+      : ArrivalChangeResult{};
+  const char *arrivalOutcome = arrival.outcome == ArrivalChangeOutcome::Within20 ? "within20"
+      : arrival.outcome == ArrivalChangeOutcome::Fall20 ? "fall20"
+      : arrival.outcome == ArrivalChangeOutcome::Rise20 ? "rise20" : nullptr;
+  out += ",\"arrival_status_text\":" + jsonString(dashboardArrivalStatus(context));
+  out += ",\"arrival_available\":" + String(arrival.available ? "true" : "false");
+  out += ",\"arrival_outcome\":" + (arrivalOutcome ? jsonString(arrivalOutcome) : String("null"));
+  out += ",\"arrival_outcome_probability\":" + (arrival.available && isfinite(arrival.probability)
+      ? String(arrival.probability, 9) : String("null"));
+  out += ",\"arrival_issued_epoch\":" + (arrival.available ? String(arrival.issuedEpoch) : String("null"));
+  out += ",\"arrival_target_epoch\":" + (arrival.available ? String(arrival.arrivalEpoch) : String("null"));
+  out += ",\"arrival_reference_epoch\":" + (arrival.available ? String(arrival.freshReferenceEpoch) : String("null"));
   const RidePmRange rideRange = dashboardRidePmRange(context);
   const JsonVariantConst ride = weatherDocument["forecast"]["ride90_210"];
   const bool rideMeanAvailable = dashboardRideWindowAvailable(context) && forecastModelPointAvailable(ride);
@@ -511,7 +528,7 @@ void setup() {
   Serial.println("{\"event\":\"voice_startup\",\"ready\":" + String(voiceReady ? "true" : "false")
       + ",\"error\":" + (voiceReady ? String("null") : jsonString(voiceControl.status().error)) + "}");
   weatherClient.begin();
-  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-25-public.1\"}");
+  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-26-public.1\"}");
   String storedSsid = settings.getString("ssid", "");
   if (storedSsid.length()) beginWifi(storedSsid, settings.getString("password", ""), false);
   drawSetupScreen();

@@ -62,6 +62,7 @@ HARNESS = r"""
 #include "PageReadout.h"
 #include "BatteryEstimate.h"
 #include "ForecastSemantics.h"
+#include "ArrivalChange.h"
 #include <cassert>
 #include <cstdio>
 #include <initializer_list>
@@ -107,6 +108,10 @@ static void build(DashboardContext &context, SpeechPlaylist &clips, String &text
   assert(!text.str().empty() && text.str().back() == '.');
   for (size_t i = 0; i < clips.count; ++i) assert(clips.clips[i] < C::Count);
   assert(!count(clips, C::Micrograms));
+  // Crossing events are retained for diagnostics, never spoken as arrivals.
+  for (C legacy : {C::FirstRiseMostLikely, C::FirstDropMostLikely,
+                   C::No20ChangeMostLikely, C::FirstRise, C::FirstDrop})
+    assert(!count(clips, legacy));
 }
 static void sessionFixture(JsonVariant session, uint32_t start, float pm, float rain = 12) {
   session["issued_epoch"] = now;
@@ -147,6 +152,15 @@ static void fixture(JsonDocument &d) {
   event["available"] = true; event["direction"] = "rise";
   event["rise_probability"] = .937; event["drop_probability"] = .063;
   event["none_probability"] = 0; event["reference_ugm3"] = 157.7;
+  auto arrival = near["arrival_change"];
+  arrival["available"] = true;
+  arrival["issued_epoch"] = now; arrival["arrival_epoch"] = now + 5400;
+  arrival["fresh_reference_epoch"] = now - 60;
+  arrival["reference_ugm3"] = 157.7;
+  arrival["fall20"] = .106; arrival["fall40"] = .03;
+  arrival["rise20"] = .106; arrival["rise40"] = .02; arrival["within20"] = .788;
+  arrival["outcome"] = "within20"; arrival["outcome_probability"] = .788;
+  arrival["display_text"] = "No change on arrival";
   auto ride = forecast["ride90_210"].to<JsonObject>();
   sessionFixture(ride, now + 5400, 777.7);
   ride["available"] = true; ride["range_kind"] = "empirical_q10_q90";
@@ -184,9 +198,9 @@ struct Test {
 static void routingAndSnapshot() {
   Test t;
   t.page(0);
-  assert(t.text.str() == "Current outdoor PM2.5 162.2. Outdoor temperature 27.6 degrees Celsius. Rain chance 1 percent. Ninety minute forecast PM2.5 888.8. Rise of twenty or more is most likely, 93.7 percent. Rain chance in an hour 2 percent.");
+  assert(t.text.str() == "Current outdoor PM2.5 162.2. Outdoor temperature 27.6 degrees Celsius. Rain chance 1 percent. Ninety minute forecast PM2.5 888.8. No change on arrival, 78.8 percent. Rain chance in an hour 2 percent.");
   lacks(t.text, "Indoor"); lacks(t.text, "126.4");
-  sequence(t.clips, {C::FirstRiseMostLikely, C::N90, C::N3, C::Point, C::N7, C::Percent, C::RainInAnHour});
+  sequence(t.clips, {C::NoChangeOnArrival, C::N70, C::N8, C::Point, C::N8, C::Percent, C::RainInAnHour});
   t.page(1);
   assert(t.text.str() == "PM2.5 forecast range 126.4 to 184.7. Chance the ride window average seventy or less is 4.8 percent. Rain chance 12 percent. Tomorrow morning has lower forecast PM2.5 than This afternoon.");
   lacks(t.text, "888.8"); lacks(t.text, "777.7"); lacks(t.text, "Feels like");
@@ -265,28 +279,28 @@ static void rainIntervalsAndValues() {
   assert(!count(t.clips, C::CurrentDataOld)); contains(t.text, "Current outdoor PM2.5 unavailable.");
 }
 static void first20Semantics() {
-  Test t; auto event = t.d["forecast"]["near90"]["first20"];
-  t.page(0); assert(count(t.clips, C::FirstRiseMostLikely) == 1);
+  Test t; JsonObject event = t.d["forecast"]["near90"]["first20"].as<JsonObject>();
+  assert(first20ModelCall(event) == First20Call::Rise);
   // Argmax can indicate a rise below50%; do not invent a >=50% threshold.
   event["rise_probability"] = .4; event["drop_probability"] = .3; event["none_probability"] = .3;
-  t.page(0); assert(count(t.clips, C::FirstRiseMostLikely) == 1);
+  assert(first20ModelCall(event) == First20Call::Rise);
   event["rise_probability"] = .2; event["drop_probability"] = .7; event["none_probability"] = .1;
-  event["direction"] = "drop"; t.page(0); assert(count(t.clips, C::FirstDropMostLikely) == 1);
+  event["direction"] = "drop"; assert(first20ModelCall(event) == First20Call::Drop);
   event["rise_probability"] = .4; event["drop_probability"] = .4; event["none_probability"] = .2;
-  event["direction"] = "unresolved"; t.page(0); assert(count(t.clips, C::NoDirectional) == 1);
-  event["direction"] = "rise"; t.page(0); assert(!count(t.clips, C::FirstRiseMostLikely));
-  t.reset(); event = t.d["forecast"]["near90"]["first20"];
-  event["rise_probability"] = nullptr; t.page(0); assert(!count(t.clips, C::FirstRiseMostLikely));
-  t.reset(); event = t.d["forecast"]["near90"]["first20"];
+  event["direction"] = "unresolved"; assert(first20ModelCall(event) == First20Call::Unresolved);
+  event["direction"] = "rise"; assert(first20ModelCall(event) == First20Call::Invalid);
+  t.reset(); event = t.d["forecast"]["near90"]["first20"].as<JsonObject>();
+  event["rise_probability"] = nullptr; assert(first20ModelCall(event) == First20Call::Invalid);
+  t.reset(); event = t.d["forecast"]["near90"]["first20"].as<JsonObject>();
   event["direction"] = "drop"; event["rise_probability"] = .1;
   event["drop_probability"] = .8; event["none_probability"] = .1; event["reference_ugm3"] = 19;
-  t.page(0); assert(!count(t.clips, C::FirstDropMostLikely));
+  assert(first20ModelCall(event) == First20Call::Invalid);
   t.reset(); t.d["forecast"]["fresh"] = false; t.page(0);
-  assert(count(t.clips, C::Old) == 1 && count(t.clips, C::FirstRiseMostLikely) == 1);
+  assert(count(t.clips, C::Old) == 1 && count(t.clips, C::NoChangeOnArrival) == 1);
   t.d["forecast"]["issued_epoch"] = now - 601; t.page(0);
-  assert(!count(t.clips, C::FirstRiseMostLikely)); contains(t.text, "Ninety minute forecast PM2.5 unavailable.");
+  assert(!count(t.clips, C::NoChangeOnArrival)); contains(t.text, "Ninety minute forecast PM2.5 unavailable.");
   t.reset(); t.d["forecast"]["near90"]["target_epoch"] = now; t.page(0);
-  assert(!count(t.clips, C::FirstRiseMostLikely));
+  assert(!count(t.clips, C::NoChangeOnArrival));
 }
 static void sessionComparisonAndWarnings() {
   Test t;
@@ -471,14 +485,15 @@ static void modernForecastSemantics() {
   assert(range.available && !range.minimumMaximum && range.low == 1 && range.high == 2);
 
   t.reset(); t.d["forecast"]["near90"]["reference_pm25_ugm3"] = 42.3;
+  t.d["forecast"]["near90"]["arrival_change"]["reference_ugm3"] = 42.3;
   t.page(0); contains(t.text, "Ninety minute forecast PM2.5 888.8."); lacks(t.text, "42.3");
   t.d["forecast"]["near90"]["role"] = "persistence_anchor";
   t.page(0); contains(t.text, "Ninety minute forecast PM2.5 unavailable.");
-  assert(count(t.clips, C::FirstRiseMostLikely) == 1);
+  assert(count(t.clips, C::NoChangeOnArrival) == 1);
   t.d["forecast"]["near90"]["role"] = "experimental_model_output";
   t.d["forecast"]["near90"]["available"] = false; t.d["forecast"]["near90"]["pm25_ugm3"] = nullptr;
   t.page(0); contains(t.text, "Ninety minute forecast PM2.5 unavailable.");
-  assert(count(t.clips, C::FirstRiseMostLikely) == 1); lacks(t.text, "42.3");
+  assert(count(t.clips, C::NoChangeOnArrival) == 1); lacks(t.text, "42.3");
   for (const char *role : {"raw_model_output", "experimental_model_output", "experimental_window_mean"}) {
     for (const char *name : {"morning", "afternoon"}) {
       auto pm = t.d["forecast"]["sessions"][name]["pm"];
@@ -497,17 +512,18 @@ static void modernForecastSemantics() {
   t.reset(); auto event = t.d["forecast"]["near90"]["first20"];
   event["direction"] = "unresolved"; event["diagnostic_direction"] = "rise";
   event["qualification"]["operational_use_eligible"] = false;
-  t.page(0); assert(count(t.clips, C::FirstRiseMostLikely) == 1);
+  t.page(0); assert(count(t.clips, C::NoChangeOnArrival) == 1);
   assert(first20ModelCall(event) == First20Call::Rise);
   event["rise_probability"] = .1; event["drop_probability"] = .8; event["none_probability"] = .1;
   event["diagnostic_direction"] = "drop";
-  t.page(0); assert(count(t.clips, C::FirstDropMostLikely) == 1);
+  t.page(0); assert(count(t.clips, C::NoChangeOnArrival) == 1);
+  assert(first20ModelCall(event) == First20Call::Drop);
   event["rise_probability"] = .1; event["drop_probability"] = .2; event["none_probability"] = .7;
   event["diagnostic_direction"] = "unresolved";
-  t.page(0); assert(count(t.clips, C::No20ChangeMostLikely) == 1);
+  t.page(0); assert(count(t.clips, C::NoChangeOnArrival) == 1);
   assert(first20ModelNoChangeMostLikely(event));
   event["rise_probability"] = .4; event["drop_probability"] = .4; event["none_probability"] = .2;
-  t.page(0); assert(count(t.clips, C::NoDirectional) == 1);
+  t.page(0); assert(count(t.clips, C::NoChangeOnArrival) == 1);
   assert(!first20ModelNoChangeMostLikely(event));
   event["diagnostic_direction"] = "rise";
   assert(first20ModelCall(event) == First20Call::Invalid);
@@ -541,65 +557,127 @@ static void modernForecastSemantics() {
   t.page(1); assert(count(t.clips, C::Warning) == 1);
   contains(t.text, "Warning This afternoon has a high rain chance of 100 percent.");
 }
-static void first20ProbabilityReadout() {
+static void arrivalProbabilityReadout() {
   Test t;
-  const C headlines[] = {C::FirstRiseMostLikely, C::FirstDropMostLikely, C::No20ChangeMostLikely};
-  const char *directions[] = {"rise", "drop", "unresolved"};
+  const C headlines[] = {C::RiseOnArrival, C::FallOnArrival, C::NoChangeOnArrival};
+  const char *outcomes[] = {"rise20", "fall20", "within20"};
+  const char *labels[] = {"Rise on arrival", "Fall on arrival", "No change on arrival"};
   const char *sentences[] = {
-      "Rise of twenty or more is most likely, 78.8 percent.",
-      "Drop of twenty or more is most likely, 78.8 percent.",
-      "No change of twenty or more is most likely, 78.8 percent."};
+      "Rise on arrival, 78.8 percent.", "Fall on arrival, 78.8 percent.",
+      "No change on arrival, 78.8 percent."};
   for (unsigned winner = 0; winner < 3; ++winner) {
-    t.reset(); auto e = t.d["forecast"]["near90"]["first20"];
-    e["rise_probability"] = winner == 0 ? .788 : .106;
-    e["drop_probability"] = winner == 1 ? .788 : .106;
-    e["none_probability"] = winner == 2 ? .788 : .106;
-    e["direction"] = "unresolved"; e["diagnostic_direction"] = directions[winner];
-    e["qualification"]["operational_use_eligible"] = false;
+    t.reset(); JsonObject a = t.d["forecast"]["near90"]["arrival_change"].as<JsonObject>();
+    a["rise20"] = winner == 0 ? .788 : .106;
+    a["fall20"] = winner == 1 ? .788 : .106;
+    a["within20"] = winner == 2 ? .788 : .106;
+    a["outcome"] = outcomes[winner]; a["outcome_probability"] = .788;
+    a["display_text"] = labels[winner];
     t.page(0); contains(t.text, sentences[winner]);
     sequence(t.clips, {headlines[winner], C::N70, C::N8, C::Point, C::N8, C::Percent, C::RainInAnHour});
-    assert(count(t.clips, C::Percent) == 3); // Two hourly rain values plus model winner.
+    assert(count(t.clips, C::Percent) == 3); // Two hourly rain values plus endpoint winner.
     for (unsigned other = 0; other < 3; ++other) assert(count(t.clips, headlines[other]) == (other == winner ? 1 : 0));
   }
-  t.reset(); auto e = t.d["forecast"]["near90"]["first20"];
-  e["rise_probability"] = .7884; e["drop_probability"] = .1; e["none_probability"] = .1116;
-  t.page(0); contains(t.text, "most likely, 78.8 percent.");
-  sequence(t.clips, {C::FirstRiseMostLikely, C::N70, C::N8, C::Point, C::N8, C::Percent});
-  e["rise_probability"] = .7886; e["none_probability"] = .1114;
-  t.page(0); contains(t.text, "most likely, 78.9 percent.");
-  sequence(t.clips, {C::FirstRiseMostLikely, C::N70, C::N8, C::Point, C::N9, C::Percent});
+  {
+    t.reset(); JsonObject a = t.d["forecast"]["near90"]["arrival_change"].as<JsonObject>();
+    a["rise20"] = .7884; a["fall20"] = .1; a["within20"] = .1116;
+    a["outcome"] = "rise20"; a["outcome_probability"] = .7884; a["display_text"] = "Rise on arrival";
+    t.page(0); contains(t.text, "Rise on arrival, 78.8 percent.");
+    sequence(t.clips, {C::RiseOnArrival, C::N70, C::N8, C::Point, C::N8, C::Percent});
+    a["rise20"] = .7886; a["within20"] = .1114; a["outcome_probability"] = .7886;
+    t.page(0); contains(t.text, "Rise on arrival, 78.9 percent.");
+    sequence(t.clips, {C::RiseOnArrival, C::N70, C::N8, C::Point, C::N9, C::Percent});
+  }
   // Existing stale behavior retains an explicit notice and the same model score.
   t.d["forecast"]["fresh"] = false; t.page(0);
-  assert(count(t.clips, C::Old) == 1); contains(t.text, "most likely, 78.9 percent.");
-  for (unsigned failure = 0; failure < 8; ++failure) {
-    t.reset(); auto invalid = t.d["forecast"]["near90"]["first20"];
-    if (failure == 0) invalid["rise_probability"] = nullptr;
-    if (failure == 1) invalid["rise_probability"] = NAN;
-    if (failure == 2) invalid["rise_probability"] = 1.2;
-    if (failure == 3) invalid["none_probability"] = .2; // Malformed probability sum.
-    if (failure == 4) invalid["available"] = false;
-    if (failure == 5) invalid["diagnostic_direction"] = "drop"; // Winner disagrees with published diagnostic.
-    if (failure == 6) t.d["forecast"]["near90"]["target_epoch"] = now;
-    if (failure == 7) t.d["forecast"]["issued_epoch"] = now - 601;
+  assert(count(t.clips, C::Old) == 1); contains(t.text, "Rise on arrival, 78.9 percent.");
+  for (unsigned failure = 0; failure < 22; ++failure) {
+    t.reset(); JsonObject near = t.d["forecast"]["near90"].as<JsonObject>();
+    JsonObject invalid = near["arrival_change"].as<JsonObject>();
+    if (failure == 0) near["arrival_change"] = nullptr;
+    if (failure == 1) near.remove("arrival_change");
+    if (failure == 2) invalid["available"] = false;
+    if (failure == 3) invalid["available"] = "true";
+    if (failure == 4) invalid.remove("within20");
+    if (failure == 5) invalid["within20"] = .5; // Native distribution is incoherent.
+    if (failure == 6) invalid["outcome"] = "rise20"; // Winner disagrees with the native heads.
+    if (failure == 7) invalid["outcome_probability"] = nullptr;
+    if (failure == 8) invalid["outcome_probability"] = NAN;
+    if (failure == 9) invalid["outcome_probability"] = 1.2;
+    if (failure == 10) invalid["reference_ugm3"] = NAN;
+    if (failure == 11) invalid["issued_epoch"] = now - 1;
+    if (failure == 12) invalid["arrival_epoch"] = now + 5399;
+    if (failure == 13) invalid["fresh_reference_epoch"] = now - 241;
+    if (failure == 14) invalid["fresh_reference_epoch"] = now + 1;
+    if (failure == 15) invalid["display_text"] = "";
+    if (failure == 16) near["target_epoch"] = now;
+    if (failure == 17) t.d["forecast"]["issued_epoch"] = now - 601;
+    if (failure == 18) invalid["fall40"] = .2; // A >=40 tail cannot exceed its >=20 tail.
+    if (failure == 19) near["reference_pm25_ugm3"] = 42.3;
+    if (failure == 20) invalid["rise20"] = -1;
+    if (failure == 21) invalid["fall20"] = INFINITY;
     t.page(0);
     for (C headline : headlines) assert(!count(t.clips, headline));
-    assert(count(t.clips, C::Percent) == 2); lacks(t.text, "most likely,");
+    assert(!count(t.clips, C::ArrivalOutcomeUncertain));
+    assert(count(t.clips, C::Percent) == 2); lacks(t.text, "on arrival,");
+    sequence(t.clips, {C::UnavailableValue, C::RainInAnHour});
+    if (failure != 16 && failure != 17) contains(t.text, "Ninety minute forecast PM2.5 888.8.");
+  }
+  {
+    t.reset(); JsonObject a = t.d["forecast"]["near90"]["arrival_change"].as<JsonObject>();
+    a["fall20"] = .4; a["rise20"] = .4; a["within20"] = .2;
+    a["outcome"] = nullptr; a["outcome_probability"] = nullptr; a["display_text"] = "Arrival outcome uncertain";
+    t.page(0); contains(t.text, "Arrival outcome uncertain. Rain chance in an hour 2 percent.");
+    sequence(t.clips, {C::ArrivalOutcomeUncertain, C::RainInAnHour});
+    assert(count(t.clips, C::Percent) == 2);
+    // Exact raw equality defines a tie, not an epsilon around a unique winner.
+    a["fall20"] = .4000000000001; a["within20"] = .1999999999999;
+    a["outcome"] = "fall20"; a["outcome_probability"] = .4000000000001; a["display_text"] = "Fall on arrival";
+    t.page(0); contains(t.text, "Fall on arrival, 40.0 percent.");
+    assert(!count(t.clips, C::ArrivalOutcomeUncertain));
+    sequence(t.clips, {C::FallOnArrival, C::N40, C::Point, C::N0, C::Percent});
+    a["fall20"] = 0; a["fall40"] = 0; a["rise20"] = 0; a["rise40"] = 0; a["within20"] = 1;
+    a["outcome"] = "within20"; a["outcome_probability"] = 1; a["display_text"] = "No change on arrival";
+    t.page(0); contains(t.text, "No change on arrival, 100.0 percent.");
+    sequence(t.clips, {C::NoChangeOnArrival, C::N1, C::Hundred, C::Point, C::N0, C::Percent});
+  }
+  // A changing actual observation never rewrites the fixed issued reference.
+  t.reset(); t.d["current"]["pm25_ugm3"] = 333.3; t.page(0);
+  contains(t.text, "Current outdoor PM2.5 333.3."); contains(t.text, "No change on arrival, 78.8 percent.");
+  t.d["forecast"]["near90"]["first20"] = nullptr; t.page(0);
+  contains(t.text, "No change on arrival, 78.8 percent.");
+  // A null legacy point reference can accompany an independent native head
+  // while the point model warms up. Only the native reference is mandatory.
+  {
+    t.reset(); JsonObject near = t.d["forecast"]["near90"].as<JsonObject>();
+    near["available"] = false; near["pm25_ugm3"] = nullptr;
+    near["reference_pm25_ugm3"] = nullptr;
+    assert(decodeArrivalChange(near, now, now).available);
+    t.page(0); contains(t.text, "Ninety minute forecast PM2.5 unavailable.");
+    contains(t.text, "No change on arrival, 78.8 percent.");
+    sequence(t.clips, {C::NoChangeOnArrival, C::N70, C::N8, C::Point, C::N8, C::Percent});
+    near["arrival_change"]["reference_ugm3"] = nullptr;
+    t.page(0); assert(!count(t.clips, C::NoChangeOnArrival));
     sequence(t.clips, {C::UnavailableValue, C::RainInAnHour});
   }
-  t.reset(); auto tie = t.d["forecast"]["near90"]["first20"];
-  tie["rise_probability"] = .4; tie["drop_probability"] = .4; tie["none_probability"] = .2;
-  tie["direction"] = "unresolved"; t.page(0);
-  contains(t.text, "No directional call. Rain chance in an hour 2 percent.");
-  sequence(t.clips, {C::NoDirectional, C::RainInAnHour});
-  assert(count(t.clips, C::Percent) == 2 && !count(t.clips, C::No20ChangeMostLikely));
-  tie["rise_probability"] = 0; tie["drop_probability"] = 0; tie["none_probability"] = 1;
-  t.page(0); contains(t.text, "No change of twenty or more is most likely, 100.0 percent.");
-  sequence(t.clips, {C::No20ChangeMostLikely, C::N1, C::Hundred, C::Point, C::N0, C::Percent});
+  // Parent's 600-second expiry owns availability, even with a valid native head.
+  for (uint32_t parentAge : {uint32_t(600), uint32_t(601)}) {
+    t.reset(); const uint32_t issued = now - parentAge;
+    t.d["forecast"]["issued_epoch"] = issued;
+    JsonObject near = t.d["forecast"]["near90"].as<JsonObject>();
+    near["target_epoch"] = issued + 5400;
+    JsonObject a = near["arrival_change"].as<JsonObject>();
+    a["issued_epoch"] = issued; a["arrival_epoch"] = issued + 5400;
+    a["fresh_reference_epoch"] = issued - 240;
+    assert(decodeArrivalChange(near, issued, now).available);
+    t.page(0);
+    assert(count(t.clips, C::NoChangeOnArrival) == (parentAge == 600 ? 1 : 0));
+    assert(count(t.clips, C::Old) == (parentAge == 600 ? 1 : 0));
+  }
 }
 int main() {
   routingAndSnapshot(); demoReadoutDisclosure(); rainIntervalsAndValues(); first20Semantics();
-  sessionComparisonAndWarnings(); rangeHistoryIndoorBattery(); capacityDurationAndReset(); modernForecastSemantics(); first20ProbabilityReadout();
-  puts("PASS: demo disclosure preserves live numeric/audio semantics, structured winner probability, rise/drop/none selection, rounding, diagnostic direction, invalid/tie/expired suppression, modern min/max, coverage and existing narration safeguards");
+  sessionComparisonAndWarnings(); rangeHistoryIndoorBattery(); capacityDurationAndReset(); modernForecastSemantics(); arrivalProbabilityReadout();
+  puts("PASS: demo provenance, native arrival transcript/audio, nullable point reference independence, legacy crossing decoder, exact ties, rounding, malformed/stale/expired suppression, modern min/max, coverage and existing narration safeguards");
 }
 """
 

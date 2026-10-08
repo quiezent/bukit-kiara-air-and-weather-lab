@@ -483,6 +483,22 @@
       "text": "No change of twenty or more is most likely"
     },
     {
+      "id": "NoChangeOnArrival",
+      "text": "No change on arrival"
+    },
+    {
+      "id": "FallOnArrival",
+      "text": "Fall on arrival"
+    },
+    {
+      "id": "RiseOnArrival",
+      "text": "Rise on arrival"
+    },
+    {
+      "id": "ArrivalOutcomeUncertain",
+      "text": "Arrival outcome uncertain"
+    },
+    {
       "id": "DemoData",
       "text": "Demonstration data."
     }

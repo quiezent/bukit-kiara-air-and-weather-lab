@@ -39,6 +39,7 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(self.fixture["site_name"], "SYNTHETIC DEMO")
         self.assertEqual(self.fixture["timezone"], "Asia/Kuala_Lumpur")
         self.assertEqual(self.fixture["schema_version"], 1)
+        self.assertEqual(self.fixture["current"]["display_text"], "Latest sensor reading")
         models = []
 
         def visit(value):
@@ -120,7 +121,64 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(event["diagnostic_direction"], "unresolved")
         self.assertEqual(event["display_text"], "No large change expected")
         self.assertFalse(event["qualification"]["operational_use_eligible"])
-        self.assertNotIn("arrival_change", near)
+        arrival = near["arrival_change"]
+        self.assertEqual(arrival["outcome"], "within20")
+        self.assertEqual(arrival["outcome_probability"], .921)
+        self.assertEqual(arrival["display_text"], "No change on arrival")
+        self.assertNotEqual(arrival["within20"], event["none_probability"])
+
+    def test_native_arrival_clocks_reference_and_identity_survive_rebasing(self):
+        base = self.fixture["generated_epoch"]
+        original = copy.deepcopy(self.fixture)
+        source = original["forecast"]["near90"]["arrival_change"]
+        native_values = {key: value for key, value in source.items()
+                         if not key.endswith("_epoch")}
+        self.assertEqual(source["fall20"], .038)
+        self.assertEqual(source["fall40"], .015)
+        self.assertEqual(source["rise20"], .041)
+        self.assertEqual(source["rise40"], .00004)
+        self.assertEqual(source["within20"], .921)
+        self.assertAlmostEqual(source["fall20"] + source["rise20"] + source["within20"], 1)
+        self.assertLessEqual(source["fall40"], source["fall20"])
+        self.assertLessEqual(source["rise40"], source["rise20"])
+        for now in (base - 7200, base, base + 125, base + 86400 * 366):
+            with self.subTest(now=now):
+                payload = demo.build_payload(now, self.fixture)
+                forecast = payload["forecast"]
+                near = forecast["near90"]
+                arrival = near["arrival_change"]
+                self.assertIs(arrival["available"], True)
+                self.assertEqual(arrival["issued_epoch"], forecast["issued_epoch"])
+                self.assertEqual(arrival["arrival_epoch"], near["target_epoch"])
+                self.assertEqual(arrival["arrival_epoch"] - arrival["issued_epoch"], 5400)
+                self.assertGreater(arrival["arrival_epoch"], now)
+                reference_age = arrival["issued_epoch"] - arrival["fresh_reference_epoch"]
+                self.assertEqual(reference_age, 15)
+                self.assertLessEqual(reference_age, 240)
+                self.assertEqual(arrival["reference_ugm3"], near["reference_pm25_ugm3"])
+                self.assertEqual({key: value for key, value in arrival.items()
+                                  if not key.endswith("_epoch")}, native_values)
+                delta = now - base
+                for key in ("issued_epoch", "arrival_epoch", "fresh_reference_epoch"):
+                    self.assertEqual(arrival[key], source[key] + delta)
+                self.assertEqual(near["first20"], original["forecast"]["near90"]["first20"])
+                self.assertEqual(len(payload["history"]["points"]),
+                                 len(original["history"]["points"]))
+        self.assertEqual(self.fixture, original)
+
+    def test_arrival_is_independent_of_crossing_and_numeric_point(self):
+        fixture = copy.deepcopy(self.fixture)
+        near = fixture["forecast"]["near90"]
+        native = copy.deepcopy(near["arrival_change"])
+        near["available"] = False
+        near["pm25_ugm3"] = None
+        near["first20"] = {"available": False, "display_text": "Crossing unavailable"}
+        payload = demo.build_payload(fixture["generated_epoch"], fixture)
+        arrival = payload["forecast"]["near90"]["arrival_change"]
+        self.assertEqual(arrival, native)
+        self.assertTrue(arrival["available"])
+        self.assertIsNone(payload["forecast"]["near90"]["pm25_ugm3"])
+        self.assertFalse(payload["forecast"]["near90"]["first20"]["available"])
 
     def test_hourly_rain_intervals_contain_now_and_next_hour(self):
         now = local_epoch(2026, 10, 8, 12, 37)

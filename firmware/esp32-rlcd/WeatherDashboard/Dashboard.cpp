@@ -2,6 +2,7 @@
 #include "BatteryEstimate.h"
 #include "HistoryGraphs.h"
 #include "First20Event.h"
+#include "ArrivalChange.h"
 #include "DashboardTypography.h"
 #include <time.h>
 
@@ -146,6 +147,31 @@ void footer(U8G2 &gfx, const DashboardContext &context) {
   text(gfx, bootX + bootWidth + 6, 295, "Next Page", nextWidth);
 }
 
+void currentStatus(U8G2 &gfx, const String &status) {
+  constexpr int maxWidth = 187;
+  if (width(gfx, status.c_str()) <= maxWidth) {
+    text(gfx, 12, 111, status, maxWidth);
+    return;
+  }
+  // A break at an ASCII space preserves complete UTF-8 words and the full
+  // server label. Both baselines stay below the PM number and above the rule.
+  int split = status.lastIndexOf(' ');
+  while (split > 0) {
+    const String first = status.substring(0, split);
+    const String second = status.substring(split + 1);
+    if (width(gfx, first.c_str()) <= maxWidth
+        && width(gfx, second.c_str()) <= maxWidth) {
+      text(gfx, 12, 105, first, maxWidth);
+      text(gfx, 12, 118, second, maxWidth);
+      return;
+    }
+    split = status.lastIndexOf(' ', split - 1);
+  }
+  // Do not turn an unexpectedly oversized label into a different, clipped
+  // status. Known web labels fit the two-line area at the existing bold font.
+  text(gfx, 12, 111, "Status unavailable", maxWidth);
+}
+
 void overview(U8G2 &gfx, const DashboardContext &context) {
   heading(gfx, context, "TTDI WEATHER");
   JsonVariantConst current = section(context, "current");
@@ -156,7 +182,6 @@ void overview(U8G2 &gfx, const DashboardContext &context) {
   bool currentOk = dashboardCurrentAvailable(context);
   bool forecastOk = dashboardForecastAvailable(context);
   bool hourlyOk = weatherAvailable(context);
-  bool currentFresh = current["fresh"].as<bool>() && ageSeconds(dashboardNow(context), current["observed_epoch"]) <= 420;
   gfx.setFont(u8g2_font_helvB08_tf);
   text(gfx, 12, 47, "OUTDOOR PM2.5");
   text(gfx, 221, 47, "INDOOR");
@@ -165,7 +190,7 @@ void overview(U8G2 &gfx, const DashboardContext &context) {
   gfx.setFont(u8g2_font_helvB24_tf);
   text(gfx, 220, 88, indoor.valid ? measured(indoor.temperatureC) + " C" : "-- C", 173);
   gfx.setFont(u8g2_font_helvB08_tf);
-  text(gfx, 12, 111, (currentOk ? currentFresh ? "Observed " : "OLD " : "Unavailable ") + ageText(ageSeconds(dashboardNow(context), current["observed_epoch"])), 187);
+  currentStatus(gfx, dashboardCurrentStatus(context));
   gfx.setFont(u8g2_font_helvB12_tf);
   text(gfx, 221, 112, indoor.valid ? "RH " + measured(indoor.humidityPct) + "%" : "Sensor unavailable", 174);
   gfx.drawHLine(8, 123, 384);
@@ -183,16 +208,15 @@ void overview(U8G2 &gfx, const DashboardContext &context) {
   gfx.drawVLine(207, 184, 78);
   gfx.setFont(u8g2_font_helvB10_tf);
   text(gfx, 12, 195, "MTB  +90 MIN", 187);
-  bool nearOk = forecastOk && forecastModelPointAvailable(near)
+  bool nearWindowOk = forecastOk && near["target_epoch"].is<uint32_t>()
       && near["target_epoch"].as<uint32_t>() > dashboardNow(context);
+  bool nearOk = nearWindowOk && forecastModelPointAvailable(near);
   gfx.setFont(u8g2_font_helvB08_tf);
   bool pmFresh = forecast["fresh"].as<bool>() && ageSeconds(dashboardNow(context), forecast["issued_epoch"]) <= 120;
-  text(gfx, 12, 214, nearOk ? clockText(near["target_epoch"], "%a %H:%M") + (pmFresh ? "" : " | OLD") : "Forecast unavailable", 187);
+  text(gfx, 12, 214, nearWindowOk ? clockText(near["target_epoch"], "%a %H:%M") + (pmFresh ? "" : " | OLD") : "Forecast unavailable", 187);
   pmReading(gfx, 12, 242, nearOk ? value(near["pm25_ugm3"], 1) : "--", u8g2_font_helvB18_tf, 187);
   gfx.setFont(u8g2_font_helvB08_tf);
-  String momentumText = dashboardFirst20Status(context);
-  momentumText.replace("≥", ">=");  // The panel font lacks the greater-or-equal glyph.
-  text(gfx, 12, 258, momentumText, 187);
+  text(gfx, 12, 258, dashboardArrivalStatus(context), 187);
 
   // This is a separate 07:00-09:00 target. Never relabel the MTB morning
   // outlook's 09:00-11:00 weather or particle estimates as tennis data.
@@ -333,7 +357,10 @@ bool dashboardCurrentAvailable(const DashboardContext &context) {
 
 bool dashboardForecastAvailable(const DashboardContext &context) {
   JsonVariantConst forecast = (*context.weather)["forecast"];
-  return forecast["available"].as<bool>() && ageSeconds(dashboardNow(context), forecast["issued_epoch"]) <= 600;
+  return forecast["available"].is<bool>() && forecast["available"].as<bool>()
+      && forecast["issued_epoch"].is<uint32_t>()
+      && forecast["issued_epoch"].as<uint32_t>() >= 1700000000
+      && ageSeconds(dashboardNow(context), forecast["issued_epoch"]) <= 600;
 }
 
 bool dashboardRideWindowAvailable(const DashboardContext &context) {
@@ -366,6 +393,30 @@ HistoryPmSummary dashboardHistoryPmSummary(const DashboardContext &context) {
       && summary.lowest <= summary.average && summary.average <= summary.highest;
   if (!summary.available) return HistoryPmSummary();
   return summary;
+}
+
+String dashboardCurrentStatus(const DashboardContext &context) {
+  const JsonVariantConst current = (*context.weather)["current"];
+  if (!dashboardCurrentAvailable(context) || !current["observed_epoch"].is<uint32_t>()
+      || !forecastPmNumberValid(current["pm25_ugm3"])) return "Unavailable";
+  const uint32_t age = ageSeconds(dashboardNow(context), current["observed_epoch"]);
+  const bool fresh = current["fresh"].is<bool>() && current["fresh"].as<bool>() && age <= 420;
+  if (!current["display_text"].is<const char *>()) return fresh ? "Status unavailable" : "OLD";
+  const char *headline = current["display_text"].as<const char *>();
+  if (!headline || !headline[0]) return fresh ? "Status unavailable" : "OLD";
+  return (fresh ? String("") : String("OLD: ")) + headline;
+}
+
+String dashboardArrivalStatus(const DashboardContext &context) {
+  if (!dashboardForecastAvailable(context)) return "Arrival unavailable";
+  const JsonVariantConst forecast = (*context.weather)["forecast"];
+  const ArrivalChangeResult arrival = decodeArrivalChange(forecast["near90"],
+      forecast["issued_epoch"].as<uint32_t>(), dashboardNow(context));
+  if (!arrival.available) return "Arrival unavailable";
+  if (arrival.outcome == ArrivalChangeOutcome::Uncertain) return String(arrival.displayText);
+  // The original probability owns the result; round only its visible percent.
+  // The date row already carries OLD, leaving room for the complete headline.
+  return String(arrival.displayText) + " " + String(arrival.probability * 100, 1) + "%";
 }
 
 String dashboardFirst20Status(const DashboardContext &context) {

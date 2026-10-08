@@ -125,6 +125,10 @@ enum class SpeechClip : uint16_t {
   FirstRiseMostLikely,
   FirstDropMostLikely,
   No20ChangeMostLikely,
+  NoChangeOnArrival,
+  FallOnArrival,
+  RiseOnArrival,
+  ArrivalOutcomeUncertain,
   DemoData,
   Count
 };

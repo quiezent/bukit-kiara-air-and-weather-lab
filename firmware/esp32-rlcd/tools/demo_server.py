@@ -78,8 +78,9 @@ def build_payload(now: int | None = None,
     """Return a new example with coherent clocks, leaving the fixture intact.
 
     Values remain visibly synthetic and deliberately different: a +90-minute
-    point, a two-hour mean, predicted window extrema, and event probabilities
-    are separate quantities. No model is evaluated here.
+    point, a two-hour mean, predicted window extrema, arrival-change
+    probabilities, and first-crossing probabilities are separate quantities.
+    No model is evaluated here.
     """
     if now is None:
         now = int(time.time())
@@ -101,6 +102,13 @@ def build_payload(now: int | None = None,
     near = forecast["near90"]
     ride = forecast["ride90_210"]
     near["target_epoch"] = issued + 90 * 60
+    # This native head owns its reference and probabilities. Rebase its target
+    # alongside the parent; the epoch walk above preserves its reference age.
+    # Do not rebuild any value from the point or the separate first20 head.
+    arrival = near.get("arrival_change")
+    if isinstance(arrival, dict):
+        arrival["issued_epoch"] = issued
+        arrival["arrival_epoch"] = near["target_epoch"]
     ride["start_epoch"] = near["target_epoch"]
     ride["end_epoch"] = issued + 210 * 60
 

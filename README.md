@@ -45,6 +45,8 @@ I aligned the device API with the web current-reading and arrival-outcome text. 
 
 The [October 9 server update](docs/SERVER_UPDATE_2026_10_09.md) records the contract and **228 passing portable tests**. The live server checks belong to this server contribution; the firmware workstream verifies its own display, speech and board update.
 
+I deployed desk firmware **v26** with the matching current-reading label and native arrival headline/percentage, including the spoken summary. The board now plots all **122** observations in the checked six-hour window. All three actual framebuffers were inspected; **64 live dashboard checks and 29 Page 1 playback/recovery checks passed**. The native arrival result remains separate from first-crossing probabilities. The public [26-public.1 firmware source](firmware/esp32-rlcd) includes the implementation, API guide, updated synthetic example and passing build/host checks. Its separately generated eSpeak voice has not been flashed; the [dated verification record](firmware/esp32-rlcd/docs/VERIFICATION_2026_10_09.md) distinguishes that source build from the installed David-audio device.
+
 ## Forecast work, 8 October 2026
 
 The October 8 service used **v24.0.2 / API 1.37.0**, published then as **v24.0.2-public.1**. I publish literal outputs from a fixed fresh-sequence Ridge model for the +90 point and ride mean/minimum/maximum, and a separate logistic classifier for ≥20/≥40 arrival changes. The first-sampled-crossing HGB output remains in the APIs; the web card focuses on arrival. The publisher does not replace a PM2.5 number with persistence or use a runtime performance selector. Morning and Afternoon retain their separate fixed models, with the Afternoon provisioning limitation documented in the release guide.

@@ -1,6 +1,7 @@
 #include "PageReadout.h"
 #include "BatteryEstimate.h"
 #include "ForecastSemantics.h"
+#include "ArrivalChange.h"
 
 namespace {
 constexpr uint32_t kValidEpoch = 1700000000;
@@ -165,27 +166,25 @@ bool overview(Readout &out, const DashboardContext &context, uint32_t now) {
       && !out.announcement(SpeechClip::Old, "Data is old")) return false;
   if (!out.labelledSentence(SpeechClip::Near90Forecast, "Ninety minute forecast PM2.5", number(near["pm25_ugm3"]),
       1, 0, 9999.9f, nearModelOk)) return false;
-  JsonVariantConst event = near["first20"];
-  const First20Call call = nearWindowOk ? first20ModelCall(event) : First20Call::Invalid;
-  const bool noChangeWinner = nearWindowOk && first20ModelNoChangeMostLikely(event);
-  if (call == First20Call::Rise || call == First20Call::Drop || noChangeWinner) {
-    const bool rise = call == First20Call::Rise;
-    const bool drop = call == First20Call::Drop;
-    const SpeechClip label = rise ? SpeechClip::FirstRiseMostLikely
-        : drop ? SpeechClip::FirstDropMostLikely : SpeechClip::No20ChangeMostLikely;
-    const char *words = rise ? "Rise of twenty or more is most likely"
-        : drop ? "Drop of twenty or more is most likely"
-        : "No change of twenty or more is most likely";
-    // Use the validated winner's structured probability, never a threshold or
-    // concentration parsed from the API's independently formatted display text.
-    const float probability = number(event[rise ? "rise_probability"
-        : drop ? "drop_probability" : "none_probability"]) * 100;
+  const ArrivalChangeResult arrival = forecastOk
+      ? decodeArrivalChange(near, epoch(forecast["issued_epoch"]), now) : ArrivalChangeResult{};
+  if (arrival.available && (arrival.outcome == ArrivalChangeOutcome::Within20
+      || arrival.outcome == ArrivalChangeOutcome::Rise20 || arrival.outcome == ArrivalChangeOutcome::Fall20)) {
+    const bool rise = arrival.outcome == ArrivalChangeOutcome::Rise20;
+    const bool fall = arrival.outcome == ArrivalChangeOutcome::Fall20;
+    const SpeechClip label = rise ? SpeechClip::RiseOnArrival
+        : fall ? SpeechClip::FallOnArrival : SpeechClip::NoChangeOnArrival;
+    const char *words = rise ? "Rise on arrival" : fall ? "Fall on arrival" : "No change on arrival";
+    // The native endpoint winner is independent of first20 crossings and the
+    // primary concentration point. Capture its validated score without using
+    // the current sensor value to recalculate an issued model probability.
+    const float probability = static_cast<float>(arrival.probability * 100.0);
     if (!out.phrase(label, words)) return false;
     out.separator();
     if (!out.value(probability, 1) || !out.phrase(SpeechClip::Percent, "percent")) return false;
     out.sentence();
-  } else if (!(call == First20Call::Unresolved
-      ? out.announcement(SpeechClip::NoDirectional, "No directional call")
+  } else if (!(arrival.available && arrival.outcome == ArrivalChangeOutcome::Uncertain
+      ? out.announcement(SpeechClip::ArrivalOutcomeUncertain, "Arrival outcome uncertain")
       : out.announcement(SpeechClip::UnavailableValue, "unavailable"))) return false;
   const JsonVariantConst nextHour = rainHour(weather, now <= UINT32_MAX - 3600 ? now + 3600 : 0);
   return out.measurement(SpeechClip::RainInAnHour, "Rain chance in an hour", number(nextHour["rain_chance_pct"]),

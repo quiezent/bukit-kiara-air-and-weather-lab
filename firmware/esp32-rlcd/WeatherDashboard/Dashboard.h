@@ -26,5 +26,7 @@ bool dashboardForecastAvailable(const DashboardContext &context);
 bool dashboardRideWindowAvailable(const DashboardContext &context);
 RidePmRange dashboardRidePmRange(const DashboardContext &context);
 HistoryPmSummary dashboardHistoryPmSummary(const DashboardContext &context);
+String dashboardCurrentStatus(const DashboardContext &context);
+String dashboardArrivalStatus(const DashboardContext &context);
 String dashboardFirst20Status(const DashboardContext &context);
 void drawDashboard(U8G2 &gfx, const DashboardContext &context);

@@ -112,6 +112,11 @@ def main():
                 "--cxx", args.cxx, *compiler_arguments,
                 "--esp-sr-include", str(sdk), "--build-dir", str(build / "diagnostic_publish"),
             ])
+            run("Production native arrival decoder", [
+                sys.executable, str(tests / "arrival_change_test.py"),
+                "--cxx", args.cxx, *compiler_arguments,
+                "--arduino-json-src", str(arduino_json), "--build-dir", str(build / "arrival_change"),
+            ])
             run("Production page readout and capacity guard", [
                 sys.executable, str(tests / "page_readout_test.py"),
                 "--cxx", args.cxx, *compiler_arguments,

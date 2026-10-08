@@ -2,7 +2,7 @@
 
 Source snapshot for the **Waveshare ESP32-S3-RLCD-4.2**: three weather pages, local indoor temperature/humidity, button navigation, offline voice commands and spoken page summaries. The board needs its 16 MB flash and 8 MB OPI PSRAM configuration. The firmware obtains outdoor data from a compatible LAN server; it does not run the forecasting models.
 
-This public variant is **`weather-dashboard-25-public.1`**. It generates its own eSpeak NG speech and marks synthetic data visibly and audibly. The earlier locally deployed v25 used Microsoft David audio. Its hardware checks do **not** verify this public variant, which has not been flashed or audited on hardware. Compiling and host tests do not establish microphone recognition accuracy, speaker audibility or forecast skill.
+The October 9 public variant is **`weather-dashboard-26-public.1`**. Page 1 accepts the server's current sensor-status text and native +90-minute arrival-change headline/probability; Page 3 supports up to 128 history points within the unchanged 16 KiB response limit. The [v26 verification record](docs/VERIFICATION_2026_10_09.md) covers the warning-free build, eight C++ executables, 23 helper tests and five flash checks. Its eSpeak NG voice has not been flashed or audited on hardware. The installed David-audio v26 and its 124 clips are a separate build. Compiling and host tests do not establish microphone recognition accuracy, speaker audibility or forecast skill.
 
 ## Build from source
 
@@ -41,11 +41,11 @@ Before compiling the firmware, host tests can explicitly skip compiled-image che
 | Official U8g2 / ArduinoJson | 2.36.18 / 7.4.3 |
 | Python esptool / pyserial / zeroconf | 5.3.1 / 3.5 / 0.148.0 |
 
-It also verifies the unchanged official ESP-SR model bundle. `prepare_speech.py` synthesizes **121 ordered clips** in native `en-us`, then creates the PCM source and a hash manifest. Speech is finite, prerecorded phrase-and-number composition; eSpeak does not run on the board and this is not arbitrary text-to-speech. Phrase definitions are in [assets/speech/phrases.json](assets/speech/phrases.json).
+It also verifies the unchanged official ESP-SR model bundle. The public v26 speech preparation uses **125 ordered clips** in native `en-us`: the original 120, four arrival-outcome phrases and **Demonstration data**. It creates the PCM source and a hash manifest. The demonstration clip's enum position changes from public v25; regenerate speech and rebuild the matching source together rather than reusing an older generated file. Speech is finite, prerecorded phrase-and-number composition; eSpeak does not run on the board and this is not arbitrary text-to-speech. Phrase definitions are in [assets/speech/phrases.json](assets/speech/phrases.json).
 
 The build uses the included custom partition table, hardware USB CDC, QIO flash and OPI PSRAM. Generated speech, model data, SDK caches, build logs, host reports and firmware images are ignored build artifacts. `build/firmware/build-manifest.json` records the public build; `build/host/host-verification.json` records host checks.
 
-The [October 8 verification record](docs/VERIFICATION.md) reports a warning-free public build, seven host C++ executables, 21 helper tests, five flash-validation tests and matching independent speech generations. These are software/build checks; this public voice has not been tested on hardware.
+The [October 8 verification record](docs/VERIFICATION.md) is historical public **v25** evidence: a warning-free build, seven host C++ executables, 21 helper tests, five flash-validation tests and matching independent speech generations. It does not verify public v26. The new dated v26 record will report its own checks after completion; public-voice hardware validation remains separate.
 
 ## Flash and provision
 
@@ -105,7 +105,7 @@ The existing phonemes originated from Espressif's [pinned offline G2P tool](http
 
 Both physical microphones are captured and BSS is enabled. In this pinned SDK's WakeNet-off branch, however, MultiNet receives the original first microphone rather than a separated BSS output. **AEC and NSNET are disabled**. Speaker playback suspends microphone capture, then restores it with a quiet interval; simultaneous echo-cancelled recognition is not implemented.
 
-Page 1 reads outdoor PM2.5/temperature, current rain, the +90-minute estimate and structured first-change winner/probability, then next-hour rain. Page 2 reads the ride range or mean, mean-≤70 probability, rain and dated morning/afternoon comparisons, with rain warnings above 75%. Page 3 reads the observed PM summary, indoor readings/minimum and coarse voltage-based battery estimate. API timestamps and unavailable/stale states are preserved.
+Page 1 reads outdoor PM2.5/temperature, current rain, the +90-minute estimate and native **arrival-change** winner/probability, then next-hour rain. The screen's sensor status comes from `current.display_text`; the arrival card uses `near90.arrival_change.display_text` and its validated native probability. First-crossing probabilities remain a different target and are never an arrival fallback. An exact arrival tie says **Arrival outcome uncertain**, without a percentage. Page 2 reads the ride range or mean, mean-≤70 probability, rain and dated morning/afternoon comparisons, with rain warnings above 75%. Page 3 reads the observed PM summary, indoor readings/minimum and coarse voltage-based battery estimate. API timestamps and unavailable/stale states are preserved.
 
 ## License and scope
 
