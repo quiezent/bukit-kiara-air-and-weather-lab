@@ -48,6 +48,7 @@ class BoardMicrophone {
   size_t readInterleaved(int16_t* destination, size_t frames, uint32_t timeout_ms);
 
   void end();
+  bool released() const { return rx_ == nullptr; }
   const char* lastError() const { return error_; }
 
  private:

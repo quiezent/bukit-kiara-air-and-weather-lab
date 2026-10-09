@@ -1,6 +1,6 @@
 # LAN data contract for the ESP32 dashboard
 
-The **28-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with additive native arrival-change and current-status fields. Its public build and host checks passed, and its eSpeak NG voice remains unflashed. The [v28 verification record](VERIFICATION_OBSERVED_2026_10_09.md) separates current public-source results from installed-device checks; the [v27 indoor record](VERIFICATION_INDOOR_2026_10_09.md) and [v26 arrival record](VERIFICATION_2026_10_09.md) remain historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
+The **29-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with unchanged native arrival-change and current-status fields. Its public build/host checks and separately installed David-audio recovery checks passed as documented in the [v29 record](VERIFICATION_AUDIO_RECOVERY_2026_10_09.md); its public eSpeak NG voice remains unflashed. The [v28 observed-status record](VERIFICATION_OBSERVED_2026_10_09.md), [v27 indoor record](VERIFICATION_INDOOR_2026_10_09.md) and [v26 arrival record](VERIFICATION_2026_10_09.md) remain historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
 
 ## Discovery and transport
 
@@ -133,7 +133,7 @@ For example, replace `BOARD_HOST` with the board's current hostname or LAN addre
 curl -X POST "http://BOARD_HOST/indoor-correction" --data "temperature_offset_c=-4.0"
 ```
 
-The field must parse completely as a finite number in **[−10,+10] °C**; a JSON body is not accepted by this route. Success returns HTTP **200** with `{"saved":true,"temperature_offset_c":-4.00}`. Missing/invalid fields return **400**; a failed NVS save returns **500** without applying the requested change. Accepted settings persist across restarts. Public v28 uses the user-selected **−4.0 °C** fallback when no valid saved setting exists; flashing preserves an existing saved offset. The initial v27 −4.8 °C value and informal comparison evidence remain in the [dated v27 record](VERIFICATION_INDOOR_2026_10_09.md). Select your own offset using a co-located reference under the board's normal operating conditions; this estimate does not replace the SHTC3's factory calibration or establish traceable system calibration.
+The field must parse completely as a finite number in **[−10,+10] °C**; a JSON body is not accepted by this route. Success returns HTTP **200** with `{"saved":true,"temperature_offset_c":-4.00}`. Missing/invalid fields return **400**; a failed NVS save returns **500** without applying the requested change. Accepted settings persist across restarts. The current firmware uses the user-selected **−4.0 °C** fallback when no valid saved setting exists; flashing preserves an existing saved offset. The initial v27 −4.8 °C value and informal comparison evidence remain in the [dated v27 record](VERIFICATION_INDOOR_2026_10_09.md). Select your own offset using a co-located reference under the board's normal operating conditions; this estimate does not replace the SHTC3's factory calibration or establish traceable system calibration.
 
 Let `Traw` and `RHraw` be the manufacturer's converted sensor readings, and `offset` the configured temperature offset. The original firmware helper applies equation 1 of Sensirion's [Design Guide for Humidity and Temperature Sensors](https://sensirion.com/resource/user_guide/sht/design_in/):
 
@@ -159,3 +159,21 @@ Temperatures are in °C and RH is in percent. RH is limited to **0–100%** afte
 Unavailable measurements are returned as JSON `null`. Indoor values and their ranges on every page and in spoken summaries use the corrected readings. Outdoor observations, forecasts and history are unaffected.
 
 Changing the offset resets the corrected temperature and RH minima/maxima. Applying a setting does not take a new measurement or refresh the sample clock; a stale or invalid retained sample remains unavailable until a valid reading arrives.
+
+## Local board audio diagnostics
+
+These fields belong to the **board's own `GET /status`**, within `voice`; they are not new fields in the weather producer's `/api/rlcd/v1`. V29 adds bounded runtime recovery and diagnostics while retaining the existing speech models, dictionary, 0.80 threshold and recordings. Public build/host and installed-device recovery checks passed, without establishing hours-long reliability or new human listening evidence.
+
+| Field | Meaning |
+| --- | --- |
+| `ready`, `error` | Current recognition readiness and error |
+| `recovery_pending` | Whether a runtime recovery is pending |
+| `recovery_count`, `recovery_attempts`, `recovery_failures` | Completed recoveries, attempts and failed attempts |
+| `feed_parked`, `detect_parked` | Both acknowledgements are required for pipeline reset; speaker handoff needs feed parking/pause and microphone-channel release |
+| `last_fault`, `last_fault_ms` | Preserved most-recent fault description and uptime clock |
+| `last_fault_feed_result`, `last_fault_feed_ms`, `last_fault_fetch_ms` | Captured fault-time feed result/progress clocks, retained through recovery |
+| `last_feed_result`, `last_feed_ms`, `last_fetch_ms` | Current feed/fetch progress diagnostics |
+
+USB console commands are newline-terminated: **`AUDIORESET`** requests the same bounded recovery used after a fault; **`AUDIOSTALL`** deliberately stops detector consumption for **6,000 ms** while feeding continues, exercising the real ring-saturation/fault path. The reply is an `audio_diagnostic` event with boolean `accepted`; the stall request is rejected during readout. They are diagnostic controls and do not alter command phrases or weather values. No HTTP route exposes them.
+
+Pipeline reset waits for both workers to park outside microphone/AFE/MultiNet calls before resetting the ring/VAD, cleaning the decoder and restarting the microphone. Speaker handoff requires the **feed worker parked or healthy capture paused**, plus **verified microphone-channel release**; it does not require detector parking. This lets KEY speech proceed when recognition remains faulted. Missing required acknowledgement/release reports failure while preserving resources. Pipeline repair is deferred until speaker release. Quiet-tail and stale-event guards apply when capture resumes. These controls help verify ownership/recovery transitions; they do not establish the spontaneous fault's original cause or long-term reliability.

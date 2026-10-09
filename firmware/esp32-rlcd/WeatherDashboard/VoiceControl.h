@@ -44,6 +44,14 @@ struct VoiceStatus {
   uint32_t modelFrames = 0;
   uint8_t loadedPhrases = 0;
   uint32_t diagnosticsDropped = 0;
+  bool recoveryPending = false;
+  uint32_t recoveryCount = 0, recoveryAttempts = 0, recoveryFailures = 0;
+  const char *lastFault = "";
+  uint32_t lastFaultMs = 0, lastFeedMs = 0, lastFetchMs = 0;
+  int lastFeedResult = 0;
+  int lastFaultFeedResult = 0;
+  uint32_t lastFaultFeedMs = 0, lastFaultFetchMs = 0;
+  bool feedParked = false, detectParked = false;
 };
 
 class VoiceControl {
@@ -60,6 +68,13 @@ class VoiceControl {
   // Main-loop-only, after speaker.end(): restart capture and allow commands
   // again once a quiet post-playback tail has cleared the audio front end.
   bool resumeAfterPlayback();
+  // Main-loop-only; repairs a stopped pipeline only after both persistent
+  // workers acknowledge parking, and never while the speaker owns the pins.
+  void update(bool speakerBusy);
+  bool requestRecovery();
+  // USB diagnostics only: let the real AFE ring saturate by delaying fetch.
+  // Does not replace microphone input or inject a hardware/AFE return value.
+  bool diagnosticStall(uint32_t milliseconds);
   VoiceStatus status() const;
 
  private:

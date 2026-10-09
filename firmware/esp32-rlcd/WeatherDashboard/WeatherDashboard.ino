@@ -181,7 +181,7 @@ static String statusJson() {
   const bool connected = WiFi.status() == WL_CONNECTED;
   const uint32_t batteryAdcMv = readBatteryAdcMillivolts();
   batteryVoltage = batteryAdcMv * 3.0f / 1000.0f;
-  String out = "{\"firmware\":\"weather-dashboard-28-public.1\",\"connected\":";
+  String out = "{\"firmware\":\"weather-dashboard-29-public.1\",\"connected\":";
   out += connected ? "true" : "false";
   out += ",\"ssid\":" + jsonString(ssid);
   out += ",\"ip\":" + jsonString(connected ? WiFi.localIP().toString() : "");
@@ -298,6 +298,20 @@ static String statusJson() {
   out += ",\"sample_rate_hz\":" + String(VoiceConfig::kSampleRate);
   out += ",\"minimum_confidence\":" + String(VoiceConfig::kMinimumConfidence, 2);
   out += ",\"error\":" + (voice.error[0] ? jsonString(voice.error) : String("null"));
+  out += ",\"recovery_pending\":" + String(voice.recoveryPending ? "true" : "false");
+  out += ",\"recovery_count\":" + String(voice.recoveryCount);
+  out += ",\"recovery_attempts\":" + String(voice.recoveryAttempts);
+  out += ",\"recovery_failures\":" + String(voice.recoveryFailures);
+  out += ",\"last_fault\":" + (voice.lastFault[0] ? jsonString(voice.lastFault) : String("null"));
+  out += ",\"last_fault_ms\":" + String(voice.lastFaultMs);
+  out += ",\"last_fault_feed_result\":" + String(voice.lastFaultFeedResult);
+  out += ",\"last_fault_feed_ms\":" + String(voice.lastFaultFeedMs);
+  out += ",\"last_fault_fetch_ms\":" + String(voice.lastFaultFetchMs);
+  out += ",\"last_feed_result\":" + String(voice.lastFeedResult);
+  out += ",\"last_feed_ms\":" + String(voice.lastFeedMs);
+  out += ",\"last_fetch_ms\":" + String(voice.lastFetchMs);
+  out += ",\"feed_parked\":" + String(voice.feedParked ? "true" : "false");
+  out += ",\"detect_parked\":" + String(voice.detectParked ? "true" : "false");
   out += ",\"audio_frames\":" + String(voice.audioFrames);
   out += ",\"feed_backpressure_frames\":" + String(voice.feedBackpressureFrames);
   out += ",\"recognition_frames\":" + String(voice.recognitionFrames);
@@ -482,6 +496,15 @@ static bool decodeHex(const String &hex, String &out) {
 
 static void handleCommand(const String &line) {
   if (line == "STATUS") { Serial.println(statusJson()); return; }
+  // USB diagnostics exercise the same bounded recovery used after a fault.
+  // They do not change the learned command dictionary or weather values.
+  if (line == "AUDIORESET" || line == "AUDIOSTALL") {
+    const bool accepted = line == "AUDIORESET" ? voiceControl.requestRecovery()
+        : !readoutPlayer.busy() && voiceControl.diagnosticStall(6000);
+    Serial.println("{\"event\":\"audio_diagnostic\",\"accepted\":"
+        + String(accepted ? "true" : "false") + "}");
+    return;
+  }
   if (line == "READINFO") { requestReadout(); return; }
   if (line == "REFRESH" || line == "DISCOVER") {
     weatherClient.refresh(line == "DISCOVER");
@@ -581,7 +604,7 @@ void setup() {
   Serial.println("{\"event\":\"voice_startup\",\"ready\":" + String(voiceReady ? "true" : "false")
       + ",\"error\":" + (voiceReady ? String("null") : jsonString(voiceControl.status().error)) + "}");
   weatherClient.begin();
-  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-28-public.1\"}");
+  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-29-public.1\"}");
   String storedSsid = settings.getString("ssid", "");
   if (storedSsid.length()) beginWifi(storedSsid, settings.getString("password", ""), false);
   drawSetupScreen();
@@ -619,6 +642,7 @@ void loop() {
   processWeatherTransfer();
   bool wasReading = readoutPlayer.busy();
   readoutPlayer.update(voiceControl);
+  voiceControl.update(readoutPlayer.busy());
   if (wasReading && !readoutPlayer.busy()) {
     forceDraw = true;
     Serial.println("{\"event\":\"weather_readout_finished\",\"error\":"

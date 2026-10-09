@@ -112,6 +112,11 @@ def main():
                 "--cxx", args.cxx, *compiler_arguments,
                 "--esp-sr-include", str(sdk), "--build-dir", str(build / "diagnostic_publish"),
             ])
+            run("Production voice recovery lifecycle and audio ownership", [
+                sys.executable, str(tests / "voice_lifecycle_test.py"),
+                "--cxx", args.cxx, *compiler_arguments,
+                "--build-dir", str(build / "voice_lifecycle"),
+            ])
             run("Production native arrival decoder", [
                 sys.executable, str(tests / "arrival_change_test.py"),
                 "--cxx", args.cxx, *compiler_arguments,

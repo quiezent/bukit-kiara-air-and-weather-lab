@@ -32,7 +32,7 @@ extern "C" {
 
 namespace VoiceRuntime {
 enum class Fault : uint8_t {
-  None, Microphone, MicrophoneSuspend, MicrophoneResume, AudioFeed, AudioFetch, FrameSize
+  None, Microphone, MicrophoneSuspend, MicrophoneResume, AudioFeed, AudioFetch, FrameSize, RecoveryRequested
 };
 constexpr uint32_t kPlaybackQuietMs = 600;
 
@@ -57,17 +57,20 @@ namespace {
 using RuntimeFault = VoiceRuntime::Fault;
 using PlaybackQuietTail = VoiceRuntime::PlaybackQuietTail;
 constexpr uint32_t kPlaybackPauseTimeoutMs = 500;
+constexpr uint32_t kRecoveryWindowMs = 60000;
+constexpr uint32_t kRecoveryBackoffMs[] = {1000, 5000, 15000};
 
 using WeatherVoicePhrases::kPhrases;
 
 const char *faultText(RuntimeFault fault) {
   switch (fault) {
-    case RuntimeFault::Microphone: return "Microphone stream stopped; restart the board";
-    case RuntimeFault::MicrophoneSuspend: return "Microphone could not release audio pins for playback; restart the board";
-    case RuntimeFault::MicrophoneResume: return "Microphone could not restart after playback; restart the board";
-    case RuntimeFault::AudioFeed: return "Audio front-end feed failed; restart the board";
-    case RuntimeFault::AudioFetch: return "Audio front-end output stopped; restart the board";
-    case RuntimeFault::FrameSize: return "Unexpected recognition frame size; restart the board";
+    case RuntimeFault::Microphone: return "Microphone stream stopped";
+    case RuntimeFault::MicrophoneSuspend: return "Microphone could not release audio pins for playback";
+    case RuntimeFault::MicrophoneResume: return "Microphone could not restart after playback";
+    case RuntimeFault::AudioFeed: return "Audio front-end feed failed";
+    case RuntimeFault::AudioFetch: return "Audio front-end output stopped";
+    case RuntimeFault::FrameSize: return "Unexpected recognition frame size";
+    case RuntimeFault::RecoveryRequested: return "Audio pipeline reset requested";
     default: return "";
   }
 }
@@ -132,6 +135,21 @@ struct VoiceControl::State {
   uint32_t nextPauseToken = 0;  // Main loop owns token allocation and codec I/O.
   bool microphoneReleased = false;
   std::atomic<RuntimeFault> fault{RuntimeFault::None};
+  // The first worker publishes reason/timestamps before stopping running. A
+  // competing worker cannot expose a half-initialized fault to the main loop.
+  std::atomic<bool> faultClaimed{false};
+  std::atomic<bool> feedParked{true}, detectParked{true}, recoveryPending{false};
+  std::atomic<RuntimeFault> lastFault{RuntimeFault::None};
+  std::atomic<uint32_t> lastFaultMs{0}, lastFeedMs{0}, lastFetchMs{0};
+  std::atomic<int> lastFeedResult{0};
+  std::atomic<int> lastFaultFeedResult{0};
+  std::atomic<uint32_t> lastFaultFeedMs{0}, lastFaultFetchMs{0};
+  std::atomic<uint32_t> diagnosticStallUntilMs{0};
+  uint32_t recoveryCount = 0, recoveryAttempts = 0, recoveryFailures = 0;
+  uint32_t recoveryAttemptTimes[3]{};
+  uint8_t recoveryRecentAttempts = 0, recoveryFailureStreak = 0;
+  uint32_t recoveryDueMs = 0;
+  bool recoveryScheduled = false;
   std::atomic<uint32_t> audioFrames{0}, recognitionFrames{0};
   std::atomic<uint32_t> feedBackpressureFrames{0};
   // A dropped feed frame invalidates partial recognition and queued commands.
@@ -169,8 +187,16 @@ struct VoiceControl::State {
   }
 
   void stopWithFault(RuntimeFault reason) {
-    RuntimeFault expected = RuntimeFault::None;
-    fault.compare_exchange_strong(expected, reason);
+    bool expected = false;
+    if (!faultClaimed.compare_exchange_strong(expected, true)) return;
+    lastFault.store(reason);
+    lastFaultMs.store(millis());
+    lastFaultFeedResult.store(lastFeedResult.load());
+    lastFaultFeedMs.store(lastFeedMs.load());
+    lastFaultFetchMs.store(lastFetchMs.load());
+    fault.store(reason);
+    recoveryPending.store(true);
+    diagnosticStallUntilMs.store(0);
     running.store(false);
   }
 
@@ -181,327 +207,344 @@ struct VoiceControl::State {
 
   static void feedAudio(void *argument) {
     auto *self = static_cast<State *>(argument);
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    size_t filled = 0;
-    uint32_t lastAudioMs = millis();
-    bool silenceMode = false;
-    int64_t nextSilentUs = 0;
-    const int64_t silentFrameUs = int64_t(self->feedSamples) * 1000000 / VoiceConfig::kSampleRate;
-    constexpr size_t channels = BoardMicrophone::kMicrophoneChannels;
-    const size_t inputElements = size_t(self->feedSamples) * channels;
-    VoiceFeedHealth feedHealth(millis()); // Start only after the worker is released.
-    auto feedFrame = [&]() {
-      const int fed = self->afe->feed(self->afeData, self->input);
-      if (fed == 0) {
-        self->feedBackpressureFrames.fetch_add(1);
-        self->audioDiscontinuityEpoch.fetch_add(1);
-      }
-      const auto result = feedHealth.observe(fed, millis());
-      if (result == VoiceFeedHealth::Result::Fault) {
-        self->stopWithFault(RuntimeFault::AudioFeed);
-        return false;
-      }
-      if (result == VoiceFeedHealth::Result::Accepted) self->audioFrames.fetch_add(1);
-      // A zero return drops this input, rather than processing it twice in BSS.
-      return true;
-    };
-    while (self->running.load()) {
-      const uint32_t pauseToken = self->capturePauseRequested.load();
-      if (pauseToken) {
-        // Only the main loop touches Wire or stops/restarts the codec. Once
-        // acknowledged it can release I2S safely while this worker feeds zero
-        // PCM at the original rate, keeping AFE and its liveness timers alive.
-        if (!silenceMode) {
+    for (;;) {
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      self->feedParked.store(false);
+      size_t filled = 0;
+      uint32_t lastAudioMs = millis();
+      bool silenceMode = false;
+      int64_t nextSilentUs = 0;
+      const int64_t silentFrameUs = int64_t(self->feedSamples) * 1000000 / VoiceConfig::kSampleRate;
+      constexpr size_t channels = BoardMicrophone::kMicrophoneChannels;
+      const size_t inputElements = size_t(self->feedSamples) * channels;
+      VoiceFeedHealth feedHealth(millis()); // Start only after the worker is released.
+      auto feedFrame = [&]() {
+        const int fed = self->afe->feed(self->afeData, self->input);
+        self->lastFeedResult.store(fed);
+        self->lastFeedMs.store(millis());
+        if (fed == 0) {
+          self->feedBackpressureFrames.fetch_add(1);
+          self->audioDiscontinuityEpoch.fetch_add(1);
+        }
+        const auto result = feedHealth.observe(fed, millis());
+        if (result == VoiceFeedHealth::Result::Fault) {
+          self->stopWithFault(RuntimeFault::AudioFeed);
+          return false;
+        }
+        if (result == VoiceFeedHealth::Result::Accepted) self->audioFrames.fetch_add(1);
+        // A zero return drops this input, rather than processing it twice in BSS.
+        return true;
+      };
+      while (self->running.load()) {
+        const uint32_t pauseToken = self->capturePauseRequested.load();
+        if (pauseToken) {
+          // Only the main loop touches Wire or stops/restarts the codec. Once
+          // acknowledged it can release I2S safely while this worker feeds zero
+          // PCM at the original rate, keeping AFE and its liveness timers alive.
+          if (!silenceMode) {
+            filled = 0;
+            memset(self->input, 0, inputElements * sizeof(int16_t));
+            self->peak.store(0);
+            self->rms.store(0);
+            self->mic1Peak.store(0);
+            self->mic1Rms.store(0);
+            self->mic2Peak.store(0);
+            self->mic2Rms.store(0);
+            nextSilentUs = esp_timer_get_time();
+            silenceMode = true;
+          }
+          self->capturePaused.store(pauseToken);
+          lastAudioMs = millis();
+          if (!feedFrame()) break;
+          nextSilentUs += silentFrameUs;
+          int64_t leftUs = nextSilentUs - esp_timer_get_time();
+          if (leftUs > 0) {
+            const TickType_t ticks = pdMS_TO_TICKS(uint32_t((leftUs + 999) / 1000));
+            vTaskDelay(ticks ? ticks : 1);
+          } else {
+            // Never catch up with a burst of unpaced zero frames after a delay.
+            nextSilentUs = esp_timer_get_time();
+            vTaskDelay(1);
+          }
+          continue;
+        }
+        if (silenceMode) {
           filled = 0;
-          memset(self->input, 0, inputElements * sizeof(int16_t));
-          self->peak.store(0);
-          self->rms.store(0);
-          self->mic1Peak.store(0);
-          self->mic1Rms.store(0);
-          self->mic2Peak.store(0);
-          self->mic2Rms.store(0);
-          nextSilentUs = esp_timer_get_time();
-          silenceMode = true;
+          lastAudioMs = millis();
+          silenceMode = false;
         }
-        self->capturePaused.store(pauseToken);
-        lastAudioMs = millis();
-        if (!feedFrame()) break;
-        nextSilentUs += silentFrameUs;
-        int64_t leftUs = nextSilentUs - esp_timer_get_time();
-        if (leftUs > 0) {
-          const TickType_t ticks = pdMS_TO_TICKS(uint32_t((leftUs + 999) / 1000));
-          vTaskDelay(ticks ? ticks : 1);
-        } else {
-          // Never catch up with a burst of unpaced zero frames after a delay.
-          nextSilentUs = esp_timer_get_time();
-          vTaskDelay(1);
-        }
-        continue;
-      }
-      if (silenceMode) {
-        filled = 0;
-        lastAudioMs = millis();
-        silenceMode = false;
-      }
-      self->capturePaused.store(0);
-      // readInterleaved returns ADC time frames, not the number of int16_t
-      // elements. Both microphone samples from each frame remain together.
-      const size_t got = self->microphone.readInterleaved(
-          self->input + filled * channels, self->feedSamples - filled, 100);
-      if (self->microphone.lastError()[0]) {
-        self->stopWithFault(RuntimeFault::Microphone);
-        break;
-      }
-      if (!got) {
-        if (uint32_t(millis() - lastAudioMs) >= 2000) {
+        self->capturePaused.store(0);
+        // readInterleaved returns ADC time frames, not the number of int16_t
+        // elements. Both microphone samples from each frame remain together.
+        const size_t got = self->microphone.readInterleaved(
+            self->input + filled * channels, self->feedSamples - filled, 100);
+        if (self->microphone.lastError()[0]) {
           self->stopWithFault(RuntimeFault::Microphone);
           break;
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
-        continue;
-      }
-      lastAudioMs = millis();
-      filled += got;
-      // A request arriving during the bounded read must discard that partial
-      // microphone frame before acknowledgement and before feeding AFE.
-      if (self->capturePauseRequested.load()) {
+        if (!got) {
+          if (uint32_t(millis() - lastAudioMs) >= 2000) {
+            self->stopWithFault(RuntimeFault::Microphone);
+            break;
+          }
+          vTaskDelay(pdMS_TO_TICKS(1));
+          continue;
+        }
+        lastAudioMs = millis();
+        filled += got;
+        // A request arriving during the bounded read must discard that partial
+        // microphone frame before acknowledgement and before feeding AFE.
+        if (self->capturePauseRequested.load()) {
+          filled = 0;
+          continue;
+        }
+        if (filled < size_t(self->feedSamples)) continue;
+        uint32_t peak = 0, clipped = 0;
+        uint32_t channelPeak[channels] = {};
+        uint64_t channelSquares[channels] = {};
+        uint64_t sumSquares = 0;
+        for (size_t i = 0; i < inputElements; ++i) {
+          int32_t sample = self->input[i];
+          uint32_t magnitude = sample < 0 ? -sample : sample;
+          if (magnitude > peak) peak = magnitude;
+          const size_t channel = i % channels;
+          if (magnitude > channelPeak[channel]) channelPeak[channel] = magnitude;
+          if (magnitude >= 32760) ++clipped;
+          sumSquares += int64_t(sample) * sample;
+          channelSquares[channel] += int64_t(sample) * sample;
+        }
+        self->peak.store(peak);
+        self->rms.store(uint32_t(sqrt(double(sumSquares) / inputElements)));
+        self->mic1Peak.store(channelPeak[0]);
+        self->mic1Rms.store(uint32_t(sqrt(double(channelSquares[0]) / self->feedSamples)));
+        self->mic2Peak.store(channelPeak[1]);
+        self->mic2Rms.store(uint32_t(sqrt(double(channelSquares[1]) / self->feedSamples)));
+        self->clipped.fetch_add(clipped);
+        if (!self->running.load()) break;
+        if (!feedFrame()) break;
         filled = 0;
-        continue;
       }
-      if (filled < size_t(self->feedSamples)) continue;
-      uint32_t peak = 0, clipped = 0;
-      uint32_t channelPeak[channels] = {};
-      uint64_t channelSquares[channels] = {};
-      uint64_t sumSquares = 0;
-      for (size_t i = 0; i < inputElements; ++i) {
-        int32_t sample = self->input[i];
-        uint32_t magnitude = sample < 0 ? -sample : sample;
-        if (magnitude > peak) peak = magnitude;
-        const size_t channel = i % channels;
-        if (magnitude > channelPeak[channel]) channelPeak[channel] = magnitude;
-        if (magnitude >= 32760) ++clipped;
-        sumSquares += int64_t(sample) * sample;
-        channelSquares[channel] += int64_t(sample) * sample;
-      }
-      self->peak.store(peak);
-      self->rms.store(uint32_t(sqrt(double(sumSquares) / inputElements)));
-      self->mic1Peak.store(channelPeak[0]);
-      self->mic1Rms.store(uint32_t(sqrt(double(channelSquares[0]) / self->feedSamples)));
-      self->mic2Peak.store(channelPeak[1]);
-      self->mic2Rms.store(uint32_t(sqrt(double(channelSquares[1]) / self->feedSamples)));
-      self->clipped.fetch_add(clipped);
-      if (!self->running.load()) break;
-      if (!feedFrame()) break;
-      filled = 0;
+      // Persistent workers retain their tasks and model allocations. Parking
+      // is published only after every reader/model call above has returned.
+      self->feedParked.store(true);
     }
-    // The lifetime is the board's uptime. On a runtime fault, stop the workers
-    // without destroying objects possibly in use by ESP-SR's internal tasks.
-    // The main dashboard remains usable and reports the reason in /status.
-    vTaskDelete(nullptr);
   }
 
   static void detectCommands(void *argument) {
     auto *self = static_cast<State *>(argument);
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    VoiceUtteranceGate gate(
-        VoiceConfig::kMinimumCommandGapMs * VoiceConfig::kSampleRate / 1000,
-        VoiceConfig::kReleaseSilenceMs * VoiceConfig::kSampleRate / 1000);
-    VoiceRecognitionSession session(
-        VoiceConfig::kSessionTailSilenceMs * VoiceConfig::kSampleRate / 1000);
-    VoiceFrameAssembler assembler(self->recognitionInput, self->fetchSamples);
-    PlaybackQuietTail playbackTail;
-    uint32_t playbackEpoch = self->playbackEpoch.load();
-    uint32_t audioEpoch = self->recognitionDiscontinuityEpoch.load();
-    VoiceDiagnostic trace;
-    bool traceActive = false;
-    uint32_t traceStartedMs = 0;
-    // The exact MN7 SDK owns one stable results object. On detection/timeout detect()
-    // snapshots strings internally before resetting paths; another getter
-    // would overwrite them from the now-empty paths. Keep this borrowed pointer
-    // only on the detector task and copy it before explicit clean().
-    const esp_mn_results_t *sessionResults = nullptr;
-    auto finishTrace = [&](VoiceDiagnosticReason reason) {
-      if (!traceActive) return;
-      const esp_mn_results_t *results = reason == VoiceDiagnosticReason::SilenceTail
-          ? self->multiNet->get_results(self->multiNetData) : sessionResults;
-      trace.reason = reason;
-      trace.endedMs = millis();
-      trace.sessionDurationMs = uint32_t(trace.endedMs - traceStartedMs);
-      trace.sequence = ++self->nextDiagnosticSequence;
-      copyVoiceDiagnosticResults(trace, results);
-      if (xQueueSend(self->diagnostics, &trace, 0) != pdTRUE)
-        self->diagnosticsDropped.fetch_add(1);
-      traceActive = false;
-      sessionResults = nullptr;
-    };
-    auto clearRecognition = [&]() {
-      traceActive = false; // Playback/feed gaps are intentionally not utterance traces.
-      sessionResults = nullptr;
-      self->multiNet->clean(self->multiNetData);
-      session.stop();
-      assembler.reset();
-      gate.block();
-      playbackTail.reset();
-      self->discardEvents();
-    };
-    auto clearDiscontinuity = [&]() {
-      const uint32_t current = self->audioDiscontinuityEpoch.load();
-      if (current == audioEpoch) return false;
-      clearRecognition();
-      audioEpoch = current;
-      self->recognitionDiscontinuityEpoch.store(current);
-      return true;
-    };
-    auto consume = [&](int16_t *samples) {
-      if (clearDiscontinuity()) return false;
-      const uint32_t suppressionToken = self->playbackSuppressed.load();
-      if (suppressionToken) {
-        clearRecognition();
-        return false;
-      }
-      self->modelFrames.fetch_add(1);
-      if (traceActive) ++trace.modelFrames;
-      const esp_mn_state_t result = self->multiNet->detect(self->multiNetData, samples);
-      if (traceActive) trace.detectState = int(result);
-      // Feed can lose a frame while MultiNet evaluates the previous one.
-      if (clearDiscontinuity()) return false;
-      // Playback can be requested while detect() is evaluating this frame.
-      if (self->playbackSuppressed.load()) {
-        clearRecognition();
-        return false;
-      }
-      if (result == ESP_MN_STATE_DETECTING) return true;
-
-      if (result == ESP_MN_STATE_TIMEOUT) {
-        self->timeouts.fetch_add(1);
-        self->sessionsWithoutCommand.fetch_add(1);
-        finishTrace(VoiceDiagnosticReason::Timeout);
-      } else {
-        const esp_mn_results_t *matches = sessionResults;
-        VoiceEvent event;
-        bool valid = result == ESP_MN_STATE_DETECTED && matches && matches->num > 0;
-        if (valid) {
-          // Result memory belongs to MultiNet; copy before clean()/next detect().
-          event.commandId = matches->command_id[0];
-          event.phraseId = matches->phrase_id[0];
-          event.confidence = matches->prob[0];
-          event.recognizedMs = millis();
-          valid = event.confidence >= VoiceConfig::kMinimumConfidence
-              && event.confidence <= 1.0f
-              && knownVoiceCommand(event.commandId);
-        }
-        if (valid) {
-          self->accepted.fetch_add(1);
-          if (xQueueSend(self->events, &event, 0) != pdTRUE) self->dropped.fetch_add(1);
-        } else {
-          self->rejected.fetch_add(1);
-        }
-        finishTrace(valid ? VoiceDiagnosticReason::Detected : VoiceDiagnosticReason::Rejected);
-      }
-      self->multiNet->clean(self->multiNetData);
-      session.stop();
-      gate.block();
-      return false;
-    };
-    uint32_t lastFrameMs = millis();
-    while (self->running.load()) {
-      afe_fetch_result_t *frame = self->afe->fetch_with_delay(self->afeData, pdMS_TO_TICKS(100));
-      if (!self->running.load()) break;
-      if (!frame || frame->ret_value != ESP_OK || !frame->data) {
-        if (uint32_t(millis() - lastFrameMs) >= 3000) {
-          self->stopWithFault(RuntimeFault::AudioFetch);
-          break;
-        }
-        vTaskDelay(1);
-        continue;
-      }
-      lastFrameMs = millis();
-      if (frame->data_size != int(self->fetchSamples * sizeof(int16_t))) {
-        self->stopWithFault(RuntimeFault::FrameSize);
-        break;
-      }
-      self->recognitionFrames.fetch_add(1);
-      if (clearDiscontinuity()) continue; // Discard the frame crossing the gap.
-      const bool speech = frame->vad_state == VAD_SPEECH;
-      const uint32_t currentPlaybackEpoch = self->playbackEpoch.load();
-      if (currentPlaybackEpoch != playbackEpoch) {
-        playbackEpoch = currentPlaybackEpoch;
-        clearRecognition();
-      }
-      const uint32_t suppressionToken = self->playbackSuppressed.load();
-      if (suppressionToken) {
-        self->discardEvents();
-        if (self->capturePauseRequested.load()) {
-          playbackTail.reset();
-        } else {
-          gate.observe(speech, self->fetchSamples);
-          if (playbackTail.observe(speech, self->fetchSamples,
-              millis(), self->playbackResumedMs.load())) {
-            // The fetched frame and VAD cache still belong to the suppressed
-            // interval. Resume only on a subsequent frame after this quiet tail.
-            uint32_t expectedToken = suppressionToken;
-            self->playbackSuppressed.compare_exchange_strong(expectedToken, 0);
-          }
-        }
-        continue;
-      }
-      gate.observe(speech, self->fetchSamples);
-      if (!gate.ready()) continue;
-      const auto action = session.observe(speech, self->fetchSamples);
-      if (action == VoiceRecognitionSession::FrameAction::Ignore) continue;
-      if (action == VoiceRecognitionSession::FrameAction::Start) {
-        const uint32_t sessionId = self->sessionsStarted.fetch_add(1) + 1;
-        self->multiNet->clean(self->multiNetData);
-        trace = VoiceDiagnostic{};
-        trace.sessionId = sessionId;
-        trace.vadCacheSamples = frame->vad_cache_size > 0
-            ? uint32_t(frame->vad_cache_size / sizeof(int16_t)) : 0;
-        traceStartedMs = millis();
-        traceActive = true;
-        sessionResults = self->multiNet->get_results(self->multiNetData);
-        assembler.reset();
-      }
-      if (traceActive) {
-        if (trace.afeTriggerChannel >= 0 && trace.afeTriggerChannel != frame->trigger_channel_id)
-          ++trace.afeChannelChanges;
-        trace.afeTriggerChannel = frame->trigger_channel_id;
-        trace.afeRawChannels = frame->raw_data_channels;
-        if (speech) {
-          const uint32_t samples = uint32_t(self->fetchSamples);
-          trace.speechSamples += samples >= UINT32_MAX - trace.speechSamples
-              ? UINT32_MAX - trace.speechSamples : samples;
-          if (std::isfinite(frame->data_volume)) {
-            if (!std::isfinite(trace.minimumSpeechDbfs) || frame->data_volume < trace.minimumSpeechDbfs)
-              trace.minimumSpeechDbfs = frame->data_volume;
-            if (!std::isfinite(trace.maximumSpeechDbfs) || frame->data_volume > trace.maximumSpeechDbfs)
-              trace.maximumSpeechDbfs = frame->data_volume;
-          }
-        }
-      }
-      if (action == VoiceRecognitionSession::FrameAction::Start) {
-        // AFE owns this cache until the next fetch. Consume it now, before the
-        // current speech frame, to retain audio preceding VAD's delayed onset.
-        if (frame->vad_cache_size < 0 || frame->vad_cache_size % sizeof(int16_t)
-            || (frame->vad_cache_size && !frame->vad_cache)) {
-          self->stopWithFault(RuntimeFault::FrameSize);
-          break;
-        }
-        if (!assembler.append(frame->vad_cache,
-            frame->vad_cache_size / sizeof(int16_t), consume)) continue;
-      }
-      if (!assembler.append(frame->data, self->fetchSamples, consume)) continue;
-      if (session.finished()) {
-        self->sessionsWithoutCommand.fetch_add(1);
-        finishTrace(VoiceDiagnosticReason::SilenceTail);
-        // Keep the real-time fetch task independent of USB console readers.
-        // HTTP /status retains the unmatched-session and model-frame counters.
+    for (;;) {
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      self->detectParked.store(false);
+      VoiceUtteranceGate gate(
+          VoiceConfig::kMinimumCommandGapMs * VoiceConfig::kSampleRate / 1000,
+          VoiceConfig::kReleaseSilenceMs * VoiceConfig::kSampleRate / 1000);
+      VoiceRecognitionSession session(
+          VoiceConfig::kSessionTailSilenceMs * VoiceConfig::kSampleRate / 1000);
+      VoiceFrameAssembler assembler(self->recognitionInput, self->fetchSamples);
+      PlaybackQuietTail playbackTail;
+      uint32_t playbackEpoch = self->playbackEpoch.load();
+      uint32_t audioEpoch = self->recognitionDiscontinuityEpoch.load();
+      VoiceDiagnostic trace;
+      bool traceActive = false;
+      uint32_t traceStartedMs = 0;
+      // The exact MN7 SDK owns one stable results object. On detection/timeout detect()
+      // snapshots strings internally before resetting paths; another getter
+      // would overwrite them from the now-empty paths. Keep this borrowed pointer
+      // only on the detector task and copy it before explicit clean().
+      const esp_mn_results_t *sessionResults = nullptr;
+      auto finishTrace = [&](VoiceDiagnosticReason reason) {
+        if (!traceActive) return;
+        const esp_mn_results_t *results = reason == VoiceDiagnosticReason::SilenceTail
+            ? self->multiNet->get_results(self->multiNetData) : sessionResults;
+        trace.reason = reason;
+        trace.endedMs = millis();
+        trace.sessionDurationMs = uint32_t(trace.endedMs - traceStartedMs);
+        trace.sequence = ++self->nextDiagnosticSequence;
+        copyVoiceDiagnosticResults(trace, results);
+        if (xQueueSend(self->diagnostics, &trace, 0) != pdTRUE)
+          self->diagnosticsDropped.fetch_add(1);
+        traceActive = false;
+        sessionResults = nullptr;
+      };
+      auto clearRecognition = [&]() {
+        traceActive = false; // Playback/feed gaps are intentionally not utterance traces.
+        sessionResults = nullptr;
         self->multiNet->clean(self->multiNetData);
         session.stop();
         assembler.reset();
+        gate.block();
+        playbackTail.reset();
+        self->discardEvents();
+      };
+      auto clearDiscontinuity = [&]() {
+        const uint32_t current = self->audioDiscontinuityEpoch.load();
+        if (current == audioEpoch) return false;
+        clearRecognition();
+        audioEpoch = current;
+        self->recognitionDiscontinuityEpoch.store(current);
+        return true;
+      };
+      auto consume = [&](int16_t *samples) {
+        if (clearDiscontinuity()) return false;
+        const uint32_t suppressionToken = self->playbackSuppressed.load();
+        if (suppressionToken) {
+          clearRecognition();
+          return false;
+        }
+        self->modelFrames.fetch_add(1);
+        if (traceActive) ++trace.modelFrames;
+        const esp_mn_state_t result = self->multiNet->detect(self->multiNetData, samples);
+        if (traceActive) trace.detectState = int(result);
+        // Feed can lose a frame while MultiNet evaluates the previous one.
+        if (clearDiscontinuity()) return false;
+        // Playback can be requested while detect() is evaluating this frame.
+        if (self->playbackSuppressed.load()) {
+          clearRecognition();
+          return false;
+        }
+        if (result == ESP_MN_STATE_DETECTING) return true;
+
+        if (result == ESP_MN_STATE_TIMEOUT) {
+          self->timeouts.fetch_add(1);
+          self->sessionsWithoutCommand.fetch_add(1);
+          finishTrace(VoiceDiagnosticReason::Timeout);
+        } else {
+          const esp_mn_results_t *matches = sessionResults;
+          VoiceEvent event;
+          bool valid = result == ESP_MN_STATE_DETECTED && matches && matches->num > 0;
+          if (valid) {
+            // Result memory belongs to MultiNet; copy before clean()/next detect().
+            event.commandId = matches->command_id[0];
+            event.phraseId = matches->phrase_id[0];
+            event.confidence = matches->prob[0];
+            event.recognizedMs = millis();
+            valid = event.confidence >= VoiceConfig::kMinimumConfidence
+                && event.confidence <= 1.0f
+                && knownVoiceCommand(event.commandId);
+          }
+          if (valid) {
+            self->accepted.fetch_add(1);
+            if (xQueueSend(self->events, &event, 0) != pdTRUE) self->dropped.fetch_add(1);
+          } else {
+            self->rejected.fetch_add(1);
+          }
+          finishTrace(valid ? VoiceDiagnosticReason::Detected : VoiceDiagnosticReason::Rejected);
+        }
+        self->multiNet->clean(self->multiNetData);
+        session.stop();
+        gate.block();
+        return false;
+      };
+      uint32_t lastFrameMs = millis();
+      while (self->running.load()) {
+        uint32_t stallUntil = self->diagnosticStallUntilMs.load();
+        while (self->running.load() && stallUntil && int32_t(stallUntil - millis()) > 0) {
+          vTaskDelay(pdMS_TO_TICKS(10));
+          stallUntil = self->diagnosticStallUntilMs.load();
+        }
+        if (!self->running.load()) break;
+        afe_fetch_result_t *frame = self->afe->fetch_with_delay(self->afeData, pdMS_TO_TICKS(100));
+        if (!self->running.load()) break;
+        if (!frame || frame->ret_value != ESP_OK || !frame->data) {
+          if (uint32_t(millis() - lastFrameMs) >= 3000) {
+            self->stopWithFault(RuntimeFault::AudioFetch);
+            break;
+          }
+          vTaskDelay(1);
+          continue;
+        }
+        lastFrameMs = millis();
+        self->lastFetchMs.store(lastFrameMs);
+        if (frame->data_size != int(self->fetchSamples * sizeof(int16_t))) {
+          self->stopWithFault(RuntimeFault::FrameSize);
+          break;
+        }
+        self->recognitionFrames.fetch_add(1);
+        if (clearDiscontinuity()) continue; // Discard the frame crossing the gap.
+        const bool speech = frame->vad_state == VAD_SPEECH;
+        const uint32_t currentPlaybackEpoch = self->playbackEpoch.load();
+        if (currentPlaybackEpoch != playbackEpoch) {
+          playbackEpoch = currentPlaybackEpoch;
+          clearRecognition();
+        }
+        const uint32_t suppressionToken = self->playbackSuppressed.load();
+        if (suppressionToken) {
+          self->discardEvents();
+          if (self->capturePauseRequested.load()) {
+            playbackTail.reset();
+          } else {
+            gate.observe(speech, self->fetchSamples);
+            if (playbackTail.observe(speech, self->fetchSamples,
+                millis(), self->playbackResumedMs.load())) {
+              // The fetched frame and VAD cache still belong to the suppressed
+              // interval. Resume only on a subsequent frame after this quiet tail.
+              uint32_t expectedToken = suppressionToken;
+              self->playbackSuppressed.compare_exchange_strong(expectedToken, 0);
+            }
+          }
+          continue;
+        }
+        gate.observe(speech, self->fetchSamples);
+        if (!gate.ready()) continue;
+        const auto action = session.observe(speech, self->fetchSamples);
+        if (action == VoiceRecognitionSession::FrameAction::Ignore) continue;
+        if (action == VoiceRecognitionSession::FrameAction::Start) {
+          const uint32_t sessionId = self->sessionsStarted.fetch_add(1) + 1;
+          self->multiNet->clean(self->multiNetData);
+          trace = VoiceDiagnostic{};
+          trace.sessionId = sessionId;
+          trace.vadCacheSamples = frame->vad_cache_size > 0
+              ? uint32_t(frame->vad_cache_size / sizeof(int16_t)) : 0;
+          traceStartedMs = millis();
+          traceActive = true;
+          sessionResults = self->multiNet->get_results(self->multiNetData);
+          assembler.reset();
+        }
+        if (traceActive) {
+          if (trace.afeTriggerChannel >= 0 && trace.afeTriggerChannel != frame->trigger_channel_id)
+            ++trace.afeChannelChanges;
+          trace.afeTriggerChannel = frame->trigger_channel_id;
+          trace.afeRawChannels = frame->raw_data_channels;
+          if (speech) {
+            const uint32_t samples = uint32_t(self->fetchSamples);
+            trace.speechSamples += samples >= UINT32_MAX - trace.speechSamples
+                ? UINT32_MAX - trace.speechSamples : samples;
+            if (std::isfinite(frame->data_volume)) {
+              if (!std::isfinite(trace.minimumSpeechDbfs) || frame->data_volume < trace.minimumSpeechDbfs)
+                trace.minimumSpeechDbfs = frame->data_volume;
+              if (!std::isfinite(trace.maximumSpeechDbfs) || frame->data_volume > trace.maximumSpeechDbfs)
+                trace.maximumSpeechDbfs = frame->data_volume;
+            }
+          }
+        }
+        if (action == VoiceRecognitionSession::FrameAction::Start) {
+          // AFE owns this cache until the next fetch. Consume it now, before the
+          // current speech frame, to retain audio preceding VAD's delayed onset.
+          if (frame->vad_cache_size < 0 || frame->vad_cache_size % sizeof(int16_t)
+              || (frame->vad_cache_size && !frame->vad_cache)) {
+            self->stopWithFault(RuntimeFault::FrameSize);
+            break;
+          }
+          if (!assembler.append(frame->vad_cache,
+              frame->vad_cache_size / sizeof(int16_t), consume)) continue;
+        }
+        if (!assembler.append(frame->data, self->fetchSamples, consume)) continue;
+        if (session.finished()) {
+          self->sessionsWithoutCommand.fetch_add(1);
+          finishTrace(VoiceDiagnosticReason::SilenceTail);
+          // Keep the real-time fetch task independent of USB console readers.
+          // HTTP /status retains the unmatched-session and model-frame counters.
+          self->multiNet->clean(self->multiNetData);
+          session.stop();
+          assembler.reset();
+        }
       }
+      // Persistent workers retain their tasks and model allocations. Parking
+      // is published only after every reader/model call above has returned.
+      self->detectParked.store(true);
     }
-    vTaskDelete(nullptr);
   }
+
 };
 
 bool VoiceControl::begin() {
@@ -656,6 +699,8 @@ bool VoiceControl::begin() {
   state_ = state;
   startupError_[0] = '\0';
   state_->running.store(true);
+  state_->feedParked.store(false);
+  state_->detectParked.store(false);
   xTaskNotifyGive(state_->detectTask);
   xTaskNotifyGive(state_->feedTask);
   return true;
@@ -682,18 +727,20 @@ bool VoiceControl::takeDiagnostic(VoiceDiagnostic &diagnostic) {
 bool VoiceControl::pauseForPlayback() {
   if (!state_) return true;  // Disabled or startup failed; no capture to release.
   State *self = state_;
-  if (!self->running.load()) return false;
-  if (self->microphoneReleased) return true;
+  if (self->microphoneReleased && self->microphone.released()) return true;
   uint32_t token = ++self->nextPauseToken;
   if (!token) token = ++self->nextPauseToken;
   self->playbackSuppressed.store(self->playbackEpoch.fetch_add(1) + 1);
   self->capturePauseRequested.store(token);
   self->discardEvents();
   const uint32_t started = millis();
-  while (self->running.load() && self->capturePaused.load() != token
-      && uint32_t(millis() - started) < kPlaybackPauseTimeoutMs) delay(1);
-  if (!self->running.load()) return false;
-  if (self->capturePaused.load() != token) {
+  while (uint32_t(millis() - started) < kPlaybackPauseTimeoutMs) {
+    if (self->running.load() ? self->capturePaused.load() == token : self->feedParked.load()) break;
+    delay(1);
+  }
+  const bool captureSafe = self->running.load()
+      ? self->capturePaused.load() == token : self->feedParked.load();
+  if (!captureSafe) {
     // Leave the capture hardware alone on timeout. Recognition clears itself
     // after a quiet tail; neither worker is killed or its resources destroyed.
     self->playbackResumedMs.store(millis());
@@ -702,8 +749,8 @@ bool VoiceControl::pauseForPlayback() {
     return false;
   }
   self->microphone.end();
-  self->microphoneReleased = true;
-  if (self->microphone.lastError()[0]) {
+  self->microphoneReleased = self->microphone.released();
+  if (!self->microphoneReleased) {
     self->stopWithFault(RuntimeFault::MicrophoneSuspend);
     return false;
   }
@@ -713,7 +760,9 @@ bool VoiceControl::pauseForPlayback() {
 bool VoiceControl::resumeAfterPlayback() {
   if (!state_) return true;
   State *self = state_;
-  if (!self->running.load()) return false;
+  // Successful speaker playback does not depend on recognition recovering.
+  // Keep its fault/pending state visible and let update() repair it when idle.
+  if (!self->running.load()) return self->microphoneReleased && self->microphone.released();
   if (!self->microphoneReleased) return self->capturePauseRequested.load() == 0;
   // Feed remains paused during shared-Wire codec setup and startup draining.
   if (!self->microphone.begin()) {
@@ -726,6 +775,88 @@ bool VoiceControl::resumeAfterPlayback() {
   self->playbackSuppressed.store(self->playbackEpoch.fetch_add(1) + 1);
   self->capturePauseRequested.store(0);
   return true;
+}
+
+bool VoiceControl::requestRecovery() {
+  if (!state_) return false;
+  state_->stopWithFault(RuntimeFault::RecoveryRequested);
+  state_->recoveryDueMs = millis();
+  state_->recoveryScheduled = true;
+  return true;
+}
+
+bool VoiceControl::diagnosticStall(uint32_t milliseconds) {
+  if (!state_ || !state_->running.load() || state_->playbackSuppressed.load()
+      || milliseconds < 1000 || milliseconds > 10000) return false;
+  uint32_t until = millis() + milliseconds;
+  if (!until) ++until;
+  state_->diagnosticStallUntilMs.store(until);
+  return true;
+}
+
+void VoiceControl::update(bool speakerBusy) {
+  if (!state_ || speakerBusy) return;
+  State *self = state_;
+  // running is cleared only after first-fault metadata has been published.
+  // Both persistent workers must park outside all microphone/AFE/MN calls.
+  if (self->running.load() || !self->recoveryPending.load() || !self->faultClaimed.load()
+      || self->fault.load() == RuntimeFault::None
+      || !self->feedParked.load() || !self->detectParked.load()) return;
+  const uint32_t now = millis();
+  if (!self->recoveryScheduled) {
+    self->recoveryDueMs = now + kRecoveryBackoffMs[0];
+    self->recoveryScheduled = true;
+    return;
+  }
+  while (self->recoveryRecentAttempts
+      && uint32_t(now - self->recoveryAttemptTimes[0]) >= kRecoveryWindowMs) {
+    --self->recoveryRecentAttempts;
+    for (uint8_t i = 0; i < self->recoveryRecentAttempts; ++i)
+      self->recoveryAttemptTimes[i] = self->recoveryAttemptTimes[i + 1];
+  }
+  if (self->recoveryRecentAttempts == 3 || int32_t(now - self->recoveryDueMs) < 0) return;
+  self->recoveryAttemptTimes[self->recoveryRecentAttempts++] = now;
+  ++self->recoveryAttempts;
+  self->microphone.end();
+  self->microphoneReleased = self->microphone.released();
+  bool repaired = self->microphoneReleased && self->feedParked.load() && self->detectParked.load();
+  if (repaired) repaired = self->afe->reset_buffer && self->afe->reset_buffer(self->afeData) == 1;
+  if (repaired) repaired = self->afe->reset_vad && self->afe->reset_vad(self->afeData) == 1;
+  if (repaired) {
+    self->multiNet->clean(self->multiNetData);
+    self->discardEvents();
+    xQueueReset(self->diagnostics);
+    const uint32_t discontinuity = self->audioDiscontinuityEpoch.fetch_add(1) + 1;
+    self->recognitionDiscontinuityEpoch.store(discontinuity);
+    repaired = self->microphone.begin();
+    self->microphoneReleased = self->microphone.released();
+  }
+  if (!repaired) {
+    // A failed begin may have retained a channel. Verify cleanup next time;
+    // never notify either worker while initialization is incomplete.
+    self->microphone.end();
+    self->microphoneReleased = self->microphone.released();
+    ++self->recoveryFailures;
+    if (self->recoveryFailureStreak < 2) ++self->recoveryFailureStreak;
+    self->recoveryDueMs = millis() + kRecoveryBackoffMs[self->recoveryFailureStreak];
+    return;
+  }
+  self->capturePauseRequested.store(0);
+  self->capturePaused.store(0);
+  self->diagnosticStallUntilMs.store(0);
+  self->playbackResumedMs.store(millis());
+  self->playbackSuppressed.store(self->playbackEpoch.fetch_add(1) + 1);
+  self->fault.store(RuntimeFault::None);
+  self->faultClaimed.store(false);
+  self->recoveryPending.store(false);
+  self->recoveryScheduled = false;
+  self->recoveryFailureStreak = 0;
+  ++self->recoveryCount;
+  self->feedParked.store(false);
+  self->detectParked.store(false);
+  self->running.store(true);
+  xTaskNotifyGive(self->detectTask);
+  xTaskNotifyGive(self->feedTask);
 }
 
 VoiceStatus VoiceControl::status() const {
@@ -754,6 +885,20 @@ VoiceStatus VoiceControl::status() const {
   result.modelFrames = state_->modelFrames.load();
   result.loadedPhrases = state_->loadedPhrases;
   result.diagnosticsDropped = state_->diagnosticsDropped.load();
+  result.recoveryPending = state_->recoveryPending.load();
+  result.recoveryCount = state_->recoveryCount;
+  result.recoveryAttempts = state_->recoveryAttempts;
+  result.recoveryFailures = state_->recoveryFailures;
+  result.lastFault = faultText(state_->lastFault.load());
+  result.lastFaultMs = state_->lastFaultMs.load();
+  result.lastFeedResult = state_->lastFeedResult.load();
+  result.lastFeedMs = state_->lastFeedMs.load();
+  result.lastFetchMs = state_->lastFetchMs.load();
+  result.lastFaultFeedResult = state_->lastFaultFeedResult.load();
+  result.lastFaultFeedMs = state_->lastFaultFeedMs.load();
+  result.lastFaultFetchMs = state_->lastFaultFetchMs.load();
+  result.feedParked = state_->feedParked.load();
+  result.detectParked = state_->detectParked.load();
   return result;
 }
 
@@ -768,6 +913,9 @@ bool VoiceControl::take(VoiceEvent &) { return false; }
 bool VoiceControl::takeDiagnostic(VoiceDiagnostic &) { return false; }
 bool VoiceControl::pauseForPlayback() { return true; }
 bool VoiceControl::resumeAfterPlayback() { return true; }
+void VoiceControl::update(bool) {}
+bool VoiceControl::requestRecovery() { return false; }
+bool VoiceControl::diagnosticStall(uint32_t) { return false; }
 VoiceStatus VoiceControl::status() const {
   VoiceStatus result;
   result.error = startupError_;
