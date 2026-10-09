@@ -117,6 +117,16 @@ def main():
                 "--cxx", args.cxx, *compiler_arguments,
                 "--arduino-json-src", str(arduino_json), "--build-dir", str(build / "arrival_change"),
             ])
+            run("Production indoor temperature and RH compensation", [
+                sys.executable, str(tests / "indoor_compensation_test.py"),
+                "--cxx", args.cxx, *compiler_arguments,
+                "--build-dir", str(build / "indoor_compensation"),
+            ])
+            run("Production indoor sensor and correction lifecycle", [
+                sys.executable, str(tests / "indoor_sensor_test.py"),
+                "--cxx", args.cxx, *compiler_arguments,
+                "--build-dir", str(build / "indoor_sensor"),
+            ])
             run("Production page readout and capacity guard", [
                 sys.executable, str(tests / "page_readout_test.py"),
                 "--cxx", args.cxx, *compiler_arguments,

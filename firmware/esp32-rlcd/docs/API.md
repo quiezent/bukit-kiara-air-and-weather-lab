@@ -1,6 +1,6 @@
 # LAN data contract for the ESP32 dashboard
 
-The **26-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with additive native arrival-change and current-status fields. The [v26 verification record](VERIFICATION_2026_10_09.md) describes the public build/host checks and separate installed-board checks. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
+The **27-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with additive native arrival-change and current-status fields. Its public build and host checks passed; its eSpeak NG voice is unflashed. The [v27 verification record](VERIFICATION_INDOOR_2026_10_09.md) separates those results from installed-device checks, while the [v26 record](VERIFICATION_2026_10_09.md) remains historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
 
 ## Discovery and transport
 
@@ -60,7 +60,7 @@ The screen uses the native `display_text` plus the validated `outcome_probabilit
 
 `first20` provides `available`, `rise_probability`, `drop_probability`, `none_probability`, `reference_ugm3`, `diagnostic_direction`, `direction` and `display_text`. Probabilities are fractions in **[0,1]**, not percentages, and must sum to one within the classifier's tolerance. `diagnostic_direction` describes the raw unique winner; use `rise`, `drop` or `unresolved`. A unique neither winner and ties both use `unresolved`. Operational `direction` can remain unresolved independently of the raw winner.
 
-This head remains a separate first-crossing target. Public v26's Page 1 arrival card and readout do not use it as their arrival outcome. The retained classifier validates raw probabilities and diagnostic direction; a tie must not claim that no ≥20 crossing is most likely. When diagnostic metadata is absent, it supports legacy `direction` semantics. Preserve `display_text` and structured fields consistently for clients that present this separate target.
+This head remains a separate first-crossing target. The Page 1 arrival card and readout do not use it as their arrival outcome. The retained classifier validates raw probabilities and diagnostic direction; a tie must not claim that no ≥20 crossing is most likely. When diagnostic metadata is absent, it supports legacy `direction` semantics. Preserve `display_text` and structured fields consistently for clients that present this separate target.
 
 ### Ride range, mean and probability
 
@@ -90,10 +90,51 @@ Hourly rain uses `rain_start_epoch`/`rain_end_epoch` one-hour intervals and `rai
 
 ### Observations, history and stale data
 
-History columns are exactly `["epoch", "pm25_ugm3", "temperature_c", "heat_index_c"]`; row values may be null. Public v26 accepts up to **128 points**, within the unchanged **16 KiB complete-response budget**. When the original window contains at most 128 source rows, retain every row that fits the response budget. For larger windows, select balanced original rows preserving the endpoints and extrema of each plotted trace—PM2.5, temperature and heat index—rather than optimizing only the PM curve. Do not interpolate invented observations.
+History columns are exactly `["epoch", "pm25_ugm3", "temperature_c", "heat_index_c"]`; row values may be null. The firmware accepts up to **128 points**, within the unchanged **16 KiB complete-response budget**. When the original window contains at most 128 source rows, retain every row that fits the response budget. For larger windows, select balanced original rows preserving the endpoints and extrema of each plotted trace—PM2.5, temperature and heat index—rather than optimizing only the PM curve. Do not interpolate invented observations.
 
 Supply `gap_kind: "source_collection_before_downsampling"` and a `gaps` array describing original collection gaps, including `[]` when collection is known to be continuous. This marker lets the graph distinguish true collection gaps from spacing introduced by thinning. The firmware consumes only the first **128 gap pairs**; keep the published gap description within that limit. `pm25_summary` contains `available`, `average_ugm3`, `lowest_ugm3`, `highest_ugm3` and `sample_count`, computed from all accepted original observations in the same displayed window. The summary and original gap metadata remain based on the unthinned source even when graph rows are reduced; do not recalculate them from the retained graph rows.
 
 Outdoor observations are marked old after seven minutes (or `fresh: false`) and unavailable after 15 minutes. PM forecasts are marked old after two minutes and unavailable after ten. Modeled weather is marked old after 30 minutes and unavailable after two hours. Original clocks, null values and invalid fields control these states; a new HTTP receipt must not make old content fresh. Historical graph data can remain visible with its original dates and **OLD** markers.
 
 Indoor measurements and battery voltage come from the ESP32 board, not this API. Battery percentage is a coarse voltage-derived estimate. The firmware snapshots the selected page's values before playback so later polling/navigation cannot alter a readout mid-sentence.
+
+## Local board indoor correction
+
+This setting belongs to the **ESP32's own HTTP service**, separate from the weather producer's `/api/rlcd/v1`. Send `POST /indoor-correction` to the board with `Content-Type: application/x-www-form-urlencoded` and this form field:
+
+```text
+temperature_offset_c=-4.8
+```
+
+For example, replace `BOARD_HOST` with the board's current hostname or LAN address:
+
+```sh
+curl -X POST "http://BOARD_HOST/indoor-correction" --data "temperature_offset_c=-4.8"
+```
+
+The field must parse completely as a finite number in **[−10,+10] °C**; a JSON body is not accepted by this route. Success returns HTTP **200** with `{"saved":true,"temperature_offset_c":-4.80}`. Missing/invalid fields return **400**; a failed NVS save returns **500** without applying the requested change. Accepted settings persist across restarts. With no saved valid setting, the public default is −4.8 °C. It was selected for normal desk use outside direct airflow from an earlier handheld comparison of raw 30.8 °C with a Dyson reading 26 °C; this was not a controlled desk calibration. The later airflow pair was 30.2 °C/60.2% RH versus 28 °C/72% RH, a different 2.2 °C temperature gap. Select your own offset using a co-located reference under the board's normal operating conditions; the estimate does not replace the SHTC3's factory calibration or establish traceable system calibration.
+
+Let `Traw` and `RHraw` be the manufacturer's converted sensor readings, and `offset` the configured temperature offset. The original firmware helper applies equation 1 of Sensirion's [Design Guide for Humidity and Temperature Sensors](https://sensirion.com/resource/user_guide/sht/design_in/):
+
+```text
+Tcorrected = Traw + offset
+RHcorrected = RHraw × exp(17.62 × 243.21 × (Traw − Tcorrected)
+                         / ((243.21 + Traw) × (243.21 + Tcorrected)))
+```
+
+Temperatures are in °C and RH is in percent. RH is limited to **0–100%** after compensation; no independent RH offset is fitted. Offset **0** preserves the exact original temperature and RH. The board's `GET /status` exposes these fields within `indoor`:
+
+| Field | Meaning |
+| --- | --- |
+| `temperature_c`, `humidity_pct` | Corrected readings used for indoor displays and speech |
+| `raw_temperature_c`, `raw_humidity_pct` | Original converted sensor measurements |
+| `temperature_offset_c` | Active temperature offset |
+| `humidity_temperature_compensated` | Whether the active offset is nonzero |
+| `humidity_clamped` | Whether compensation required limiting RH to 0–100% |
+| `correction_method` | `board-heat-magnus-v1` |
+| `correction_is_estimate` | `true`: this configured system correction is an estimate |
+| `correction_saved` | Whether NVS holds the active offset |
+
+Unavailable measurements are returned as JSON `null`. Indoor values and their ranges on every page and in spoken summaries use the corrected readings. Outdoor observations, forecasts and history are unaffected.
+
+Changing the offset resets the corrected temperature and RH minima/maxima. Applying a setting does not take a new measurement or refresh the sample clock; a stale or invalid retained sample remains unavailable until a valid reading arrives.

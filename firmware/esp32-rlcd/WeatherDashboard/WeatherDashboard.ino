@@ -18,6 +18,8 @@
 static ST7305_U8g2 lcd(11, 12, 5, 40, 41);
 static U8G2 *gfx = nullptr;
 static Preferences settings;
+static Preferences indoorSettings;
+static bool indoorSettingsReady = false;
 static WebServer server(80);
 static String ssid, password, serialLine;
 static bool pendingSave = false;
@@ -57,6 +59,40 @@ static bool voiceAcknowledgement = false;
 static char voiceHint[28] = "";
 static VoiceDiagnostic lastVoiceDiagnostic;
 static bool hasVoiceDiagnostic = false;
+
+static bool indoorCorrectionSaved() {
+  return indoorSettingsReady && indoorSettings.isKey("temp_offset")
+      && indoorSettings.getFloat("temp_offset", NAN) == indoorSensor.temperatureOffset();
+}
+
+static void handleIndoorCorrection() {
+  if (!server.hasArg("temperature_offset_c")) {
+    server.send(400, "application/json", "{\"error\":\"temperature_offset_c_required\"}");
+    return;
+  }
+  const String input = server.arg("temperature_offset_c");
+  if (input.length() == 0 || input.length() > 24) {
+    server.send(400, "application/json", "{\"error\":\"offset_must_be_finite_between_minus_10_and_10\"}");
+    return;
+  }
+  char *end = nullptr;
+  const float offset = strtof(input.c_str(), &end);
+  if (end == input.c_str() || !end || end != input.c_str() + input.length()
+      || !indoorOffsetValid(offset)) {
+    server.send(400, "application/json", "{\"error\":\"offset_must_be_finite_between_minus_10_and_10\"}");
+    return;
+  }
+  if (!indoorSettingsReady
+      || ((!indoorCorrectionSaved() || offset != indoorSensor.temperatureOffset())
+          && indoorSettings.putFloat("temp_offset", offset) != sizeof(float))) {
+    server.send(500, "application/json", "{\"error\":\"correction_save_failed\"}");
+    return;
+  }
+  indoorSensor.setTemperatureOffset(offset);
+  forceDraw = true;
+  server.send(200, "application/json", "{\"saved\":true,\"temperature_offset_c\":"
+      + String(indoorSensor.temperatureOffset(), 2) + "}");
+}
 
 // All input paths select pages on the Arduino loop task.
 static void selectPage(uint8_t page) {
@@ -145,7 +181,7 @@ static String statusJson() {
   const bool connected = WiFi.status() == WL_CONNECTED;
   const uint32_t batteryAdcMv = readBatteryAdcMillivolts();
   batteryVoltage = batteryAdcMv * 3.0f / 1000.0f;
-  String out = "{\"firmware\":\"weather-dashboard-26-public.1\",\"connected\":";
+  String out = "{\"firmware\":\"weather-dashboard-27-public.1\",\"connected\":";
   out += connected ? "true" : "false";
   out += ",\"ssid\":" + jsonString(ssid);
   out += ",\"ip\":" + jsonString(connected ? WiFi.localIP().toString() : "");
@@ -171,6 +207,17 @@ static String statusJson() {
   out += ",\"indoor\":{\"available\":" + String(indoor.valid ? "true" : "false");
   out += ",\"temperature_c\":" + (indoor.valid ? String(indoor.temperatureC, 2) : String("null"));
   out += ",\"humidity_pct\":" + (indoor.valid ? String(indoor.humidityPct, 2) : String("null"));
+  out += ",\"raw_temperature_c\":" + (indoor.valid ? String(indoor.rawTemperatureC, 2) : String("null"));
+  out += ",\"raw_humidity_pct\":" + (indoor.valid ? String(indoor.rawHumidityPct, 2) : String("null"));
+  out += ",\"temperature_offset_c\":" + String(indoorSensor.temperatureOffset(), 2);
+  out += ",\"humidity_temperature_compensated\":" + String(indoorSensor.temperatureOffset() != 0 ? "true" : "false");
+  out += ",\"humidity_clamped\":" + String(indoor.humidityClamped ? "true" : "false");
+  out += ",\"correction_method\":\"board-heat-magnus-v1\",\"correction_is_estimate\":true";
+  out += ",\"correction_saved\":" + String(indoorCorrectionSaved() ? "true" : "false");
+  out += ",\"minimum_temperature_c\":" + (indoor.valid ? String(indoor.minimumC, 2) : String("null"));
+  out += ",\"maximum_temperature_c\":" + (indoor.valid ? String(indoor.maximumC, 2) : String("null"));
+  out += ",\"minimum_humidity_pct\":" + (indoor.valid ? String(indoor.minimumHumidity, 2) : String("null"));
+  out += ",\"maximum_humidity_pct\":" + (indoor.valid ? String(indoor.maximumHumidity, 2) : String("null"));
   out += ",\"age_s\":" + (indoor.samples ? String((millis() - indoor.lastGoodMs) / 1000) : String("null"));
   out += ",\"sensor_id\":" + String(indoor.sensorId);
   out += ",\"samples\":" + String(indoor.samples) + ",\"errors\":" + String(indoor.errors) + "}";
@@ -486,6 +533,11 @@ void setup() {
   pinMode(0, INPUT_PULLUP);
   setenv("TZ", "MYT-8", 1);
   tzset();
+  indoorSettingsReady = indoorSettings.begin("weather-indoor", false);
+  if (indoorSettingsReady) {
+    const float savedOffset = indoorSettings.getFloat("temp_offset", kIndoorDefaultTemperatureOffsetC);
+    if (indoorOffsetValid(savedOffset)) indoorSensor.setTemperatureOffset(savedOffset);
+  }
   indoorSensor.begin();
   lcd.begin(0, U8G2_R1);
   gfx = lcd.getU8g2();
@@ -495,6 +547,7 @@ void setup() {
   WiFi.setHostname("waveshare-weather");
   WiFi.setAutoReconnect(true);
   server.on("/status", HTTP_GET, []() { server.send(200, "application/json", statusJson()); });
+  server.on("/indoor-correction", HTTP_POST, handleIndoorCorrection);
   server.on("/", HTTP_GET, []() { server.send(200, "text/plain", "TTDI Weather dashboard\nKEY: read the displayed page aloud.\nBOOT: next page.\nVoice: next, next page, back, read info, read page, read, overview, page one, forecast, page two, graph, page three. No wake word.\nPOST /read-info to test the same readout as KEY.\nSee /status for microphone, voice and readout status.\n"); });
   server.on("/read-info", HTTP_POST, []() {
     if (readoutPlayer.busy()) { server.send(409, "application/json", "{\"error\":\"readout_busy\"}"); return; }
@@ -528,7 +581,7 @@ void setup() {
   Serial.println("{\"event\":\"voice_startup\",\"ready\":" + String(voiceReady ? "true" : "false")
       + ",\"error\":" + (voiceReady ? String("null") : jsonString(voiceControl.status().error)) + "}");
   weatherClient.begin();
-  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-26-public.1\"}");
+  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-27-public.1\"}");
   String storedSsid = settings.getString("ssid", "");
   if (storedSsid.length()) beginWifi(storedSsid, settings.getString("password", ""), false);
   drawSetupScreen();

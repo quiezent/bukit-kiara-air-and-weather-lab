@@ -57,7 +57,7 @@ def main():
         data = path.read_bytes()
         images.append({'file': name, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
     (build / 'build-manifest.json').write_text(json.dumps({
-        'firmware': 'weather-dashboard-26-public.1', 'built_at_utc': datetime.now(timezone.utc).isoformat(),
+        'firmware': 'weather-dashboard-27-public.1', 'built_at_utc': datetime.now(timezone.utc).isoformat(),
         'fqbn': FQBN, 'toolchain': {key: value for key, value in toolchain.items() if key != 'arduino_cli'},
         'warnings': len(warnings), 'images': images,
         'scope': 'Compiled public source with locally generated eSpeak audio; this is not the installed David-audio image.'

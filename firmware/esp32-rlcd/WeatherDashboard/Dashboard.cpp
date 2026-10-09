@@ -338,7 +338,7 @@ void historyPage(U8G2 &gfx, const DashboardContext &context) {
   text(gfx, 12, 252, "Indoor T " + (indoor.valid ? measured(indoor.temperatureC) : String("--"))
       + "C | Range " + measured(indoor.minimumC) + "-" + measured(indoor.maximumC) + "C");
   text(gfx, 12, 271, "RH " + (indoor.valid ? measured(indoor.humidityPct, 0) : String("--"))
-      + "% | " + measured(indoor.minimumHumidity, 0) + "-" + measured(indoor.maximumHumidity, 0) + "% since restart");
+      + "% | " + measured(indoor.minimumHumidity, 0) + "-" + measured(indoor.maximumHumidity, 0) + "% since reset");
   footer(gfx, context);
 }
 }

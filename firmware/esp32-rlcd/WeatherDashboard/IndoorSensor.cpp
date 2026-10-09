@@ -2,9 +2,52 @@
 #include <Wire.h>
 
 // Sensirion SHTC3 at 0x70. SDA=13/SCL=14 from Waveshare's schematic.
-// Use the manufacturer's calibrated conversion without the vendor example's
-// fixed -4 C adjustment, which has not been calibrated for this individual unit.
+// Retain the manufacturer's raw conversion, then centrally apply the user's
+// temperature correction and humidity compensation for the board's heat.
 static constexpr uint8_t ADDRESS = 0x70;
+
+void IndoorSensor::resetRanges() {
+  value.minimumC = value.maximumC = NAN;
+  value.minimumHumidity = value.maximumHumidity = NAN;
+  rangesInitialized = false;
+}
+
+void IndoorSensor::recordRanges() {
+  if (!rangesInitialized) {
+    value.minimumC = value.maximumC = value.temperatureC;
+    value.minimumHumidity = value.maximumHumidity = value.humidityPct;
+    rangesInitialized = true;
+  } else {
+    value.minimumC = min(value.minimumC, value.temperatureC);
+    value.maximumC = max(value.maximumC, value.temperatureC);
+    value.minimumHumidity = min(value.minimumHumidity, value.humidityPct);
+    value.maximumHumidity = max(value.maximumHumidity, value.humidityPct);
+  }
+}
+
+bool IndoorSensor::setTemperatureOffset(float offset) {
+  if (!indoorOffsetValid(offset)) return false;
+  if (offset == temperatureOffsetC) return true;
+  temperatureOffsetC = offset;
+  resetRanges();
+  // Configuration changes never acquire a measurement or refresh its clock.
+  // An expired/invalid retained sample must not become valid again here.
+  if (value.valid && value.samples && uint32_t(millis() - value.lastGoodMs) <= 30000) {
+    const IndoorCompensationResult corrected = indoorCompensate(
+        value.rawTemperatureC, value.rawHumidityPct, temperatureOffsetC);
+    if (corrected.valid) {
+      value.temperatureC = corrected.temperatureC;
+      value.humidityPct = corrected.humidityPct;
+      value.humidityClamped = corrected.humidityClamped;
+      recordRanges();
+      return true;
+    }
+  }
+  value.valid = false;
+  value.temperatureC = value.humidityPct = NAN;
+  value.humidityClamped = false;
+  return true;
+}
 
 bool IndoorSensor::command(uint16_t code) {
   Wire.beginTransmission(ADDRESS);
@@ -57,22 +100,26 @@ void IndoorSensor::update() {
   command(0xb098); // Sleep even on errors to reduce sensor self-heating.
   if (!ok || crc(bytes) != bytes[2] || crc(bytes + 3) != bytes[5]) {
     value.errors++;
-    value.valid = value.samples && uint32_t(millis() - value.lastGoodMs) <= 30000;
+    value.valid = value.valid && value.samples && uint32_t(millis() - value.lastGoodMs) <= 30000;
     return;
   }
   uint16_t temperatureRaw = uint16_t(bytes[0] << 8) | bytes[1];
   uint16_t humidityRaw = uint16_t(bytes[3] << 8) | bytes[4];
-  value.temperatureC = -45.0f + 175.0f * temperatureRaw / 65536.0f;
-  value.humidityPct = 100.0f * humidityRaw / 65536.0f;
-  if (!value.samples) {
-    value.minimumC = value.maximumC = value.temperatureC;
-    value.minimumHumidity = value.maximumHumidity = value.humidityPct;
-  } else {
-    value.minimumC = min(value.minimumC, value.temperatureC);
-    value.maximumC = max(value.maximumC, value.temperatureC);
-    value.minimumHumidity = min(value.minimumHumidity, value.humidityPct);
-    value.maximumHumidity = max(value.maximumHumidity, value.humidityPct);
+  const float rawTemperatureC = -45.0f + 175.0f * temperatureRaw / 65536.0f;
+  const float rawHumidityPct = 100.0f * humidityRaw / 65536.0f;
+  const IndoorCompensationResult corrected = indoorCompensate(
+      rawTemperatureC, rawHumidityPct, temperatureOffsetC);
+  if (!corrected.valid) {
+    value.errors++;
+    value.valid = value.valid && value.samples && uint32_t(millis() - value.lastGoodMs) <= 30000;
+    return;
   }
+  value.rawTemperatureC = rawTemperatureC;
+  value.rawHumidityPct = rawHumidityPct;
+  value.temperatureC = corrected.temperatureC;
+  value.humidityPct = corrected.humidityPct;
+  value.humidityClamped = corrected.humidityClamped;
+  recordRanges();
   value.samples++;
   value.lastGoodMs = millis();
   value.valid = true;
