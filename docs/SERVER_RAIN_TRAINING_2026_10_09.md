@@ -1,0 +1,13 @@
+# Rain-drop review and numerical training repair — 9 October 2026
+
+The application is **v24.0.4-public.1**, corresponding to local **v24.0.4**. Coach remains **1.37.0** and RLCD remains **schema 1**. Installation and Afternoon provisioning limits in the [release guide](SERVER_RELEASE_2026_10_08.md) still apply.
+
+The new [numerical v4 source](../app/fresh_numeric_model_v4.py) replaces the v3 import for background fitting and cached inference. It preserves the fixed 208-feature Ridge(alpha=100) learner, four targets, daily midnight cutoff, 28-day window and 330-minute embargo. Training retains confirmed immutable sensor revisions and selects them at each original issue. Completed labels use the latest revision visible at the fit cutoff. Tracked unavailable observations cannot fall back to overwritten compatibility values; partial ledger schemas fail closed. Receipt-unknown legacy observations remain explicitly identified. Read-only extraction is one consistent transaction and closes before fitting.
+
+The model has a new version and artifact name. Its actual fitting time is retained, and adapters publish its native four values. This can change numerical outputs because historical inputs change. It is a provenance correction, with no demonstrated improvement in early rain/drop warning. The existing logistic arrival probabilities, first-crossing model, display/speech vocabulary, API fields, units, target clocks and device history budget retain their contracts.
+
+**236 portable synthetic tests passed**, including eight new receipt/revision checks. The private installation passed 136 affected checks, was restarted, and returned the v4 model through both Coach and RLCD endpoints. Actual current-time estimator values matched numerical adapter values exactly. These are source and publication checks, not forecast-accuracy validation or board/audio tests.
+
+The [new journal](journal/2026-10-09-learning-from-a-rain-drop.md) reports the original warning, numerical miss and rejected probability/numerical precursor candidates. Two [offline prototype modules](../app/research/rain_precursors_20261009/README.md) are provided for reuse; they are not selected live models. The [source manifest](research/2026-10-09-rain-training-source-release.json) covers 86 runtime/helper files, 19 ported test modules and the two separate prototypes. Earlier source manifests remain dated records.
+
+No raw event dataset, operational payload, fitted weight, private network identifier or new photograph is published. Original application and prototype code use the scoped [Apache-2.0 license](../app/LICENSE.md). Firmware files are unchanged by this contribution, and the newer firmware workstream commits have been retained.

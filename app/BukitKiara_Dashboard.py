@@ -57,7 +57,7 @@ import model_output_contracts
 import ride_pm_extrema
 import momentum_display
 import fresh_event_model_v2 as fresh_event_model
-import fresh_numeric_model_v3 as fresh_numeric_model
+import fresh_numeric_model_v4 as fresh_numeric_model
 import arrival_feature_inputs
 import arrival_logistic_model as arrival_change_model
 import fresh_model_output
@@ -151,7 +151,7 @@ DRY_CLEARING_MAX_PRECIPITATION = 0.1
 POLL_SECONDS = 180       # collect every 3 minutes
 RETENTION_DAYS = 400     # Preserve more than one year for future seasonal validation.
 RIDE_API_SCHEMA_VERSION = "1.37.0"
-DASHBOARD_BUILD = "2026-10-09-rlcd-web-text-history-v24.0.3-public.1"
+DASHBOARD_BUILD = "2026-10-09-causal-numeric-training-v24.0.4-public.1"
 ACTIVE_VALIDATION_RECIPES = {
     "point90": "near_fresh_arrival_model_direct_v23", "mean90_210": "near_fresh_mean_model_direct_v23",
     "morningSession": "morning_hgb_model_direct_v21",

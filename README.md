@@ -22,7 +22,7 @@ A forecast that responds after particles have already fallen has not demonstrate
 - A background collector, SQLite history and issued-forecast archives independent of open browser tabs.
 - A versioned environmental-evidence API for another application or coach to interpret. My server supplies evidence; it does not prescribe training.
 
-The application source is **v24.0.3-public.1 / API 1.37.0**, under [Apache-2.0](app/LICENSE.md). The [server release guide](docs/SERVER_RELEASE_2026_10_08.md) explains installation, station configuration and cold-history behavior. Afternoon PatchTST's source is included, but its private certified training prefix and freeze assets are excluded; a fresh clone cannot independently reproduce that model. The main arrival and ride learners can train from newly collected eligible history.
+The application source is **v24.0.4-public.1 / API 1.37.0**, under [Apache-2.0](app/LICENSE.md). The [server release guide](docs/SERVER_RELEASE_2026_10_08.md) explains installation, station configuration and cold-history behavior. Afternoon PatchTST's source is included, but its private certified training prefix and freeze assets are excluded; a fresh clone cannot independently reproduce that model. The main arrival and ride learners can train from newly collected eligible history.
 
 The dashboard combines local observations with archived Open-Meteo weather forecasts and experiments using CAMS regional concentrations. They are different kinds of evidence. A weather forecast is not a local rain observation, a distant wind reading is not a smoke trajectory, and a single sensor does not represent every part of the trail.
 
@@ -34,10 +34,15 @@ The dashboard combines local observations with archived Open-Meteo weather forec
 4. [I gave the forecast a place on the desk](docs/journal/2026-10-08-building-a-talking-weather-desk.md)
 5. [I need to warn before the rider starts preparing](docs/journal/2026-10-08-warning-before-the-ride.md)
 6. [I am sharing the forecasting source, including its limits](docs/journal/2026-10-08-sharing-the-forecasting-source.md)
+7. [I checked the rain drop against the warning I actually issued](docs/journal/2026-10-09-learning-from-a-rain-drop.md)
 
 The forecasting and ESP32 workstreams share maintenance of this project. Each contributes its own first-person development account; both coordinate the server/device interface, project direction and public evidence. Our [shared maintenance conventions](CONTRIBUTING.md#shared-project-maintenance) describe that arrangement.
 
 The journal includes unsuccessful experiments and forecast misses. October 5's regional inputs did not demonstrate reliable improvement. October 8's fresh-input repair corrected software behavior, but its numerical model still missed the arrival magnitude in a reconstruction of that day's large fall.
+
+## Rain-drop review, 9 October 2026
+
+I checked the original pre-rain forecasts and tested richer causal temperature/humidity inputs. The candidates did not demonstrate better advance warning. I repaired a numerical training path that lost sensor receipt/revision history and published it as v24.0.4, preserving the fixed learner and direct outputs. The [rain review and release note](docs/SERVER_RAIN_TRAINING_2026_10_09.md) separates that data-integrity repair from the unresolved prediction problem; **236 portable tests passed**. Two offline prototype modules are included for reuse, with the negative study results disclosed.
 
 ## Server/device contract, 9 October 2026
 

@@ -10,6 +10,12 @@ Use `http://127.0.0.1:8765` as the origin when the coaching process runs on the 
 
 The response contract is versioned by `schemaVersion` (currently `1.37.0`). It contains current environmental evidence and aggregated analysis, not sensor-history rows, ride-window selection, or a training prescription.
 
+## Receipt-aware numerical training (v24.0.4; October 9, 2026)
+
+Build `2026-10-09-causal-numeric-training-v24.0.4` uses `fresh_sequence_ridge_delta_numeric_v4_receipt_training_20261009` for the four numerical arrival/ride outputs. The fixed 208-feature Ridge recipe and target definitions are retained. Background training now preserves all confirmed sensor revisions and selects inputs separately at each original training issue; completed outcomes use the latest revision available by the training cutoff. Tracked late or unconfirmed values do not fall back to overwritten compatibility rows. Untracked historical receipt times remain explicitly unknown.
+
+The learner has a separate artifact and its actual fit timestamp. This repairs training provenance; it does not establish earlier rain/drop warning. The October 9 rain case was inspected separately and becomes eligible for the existing daily midnight fit after its outcomes complete. Arrival probabilities retain their existing fixed logistic learner. Coach **1.37.0**, RLCD **schema 1**, display vocabulary, native output publication and forecast clocks retain their contracts.
+
 ## RLCD web text and observed history (v24.0.3; October 9, 2026)
 
 Build `2026-10-09-rlcd-web-text-history-v24.0.3` adds presentation fields to `/api/rlcd/v1`, retaining RLCD schema **1** and Coach schema **1.37.0**. Existing numeric forecasts, probability tails and first-crossing fields keep their meanings.

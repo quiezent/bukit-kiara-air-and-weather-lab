@@ -1,12 +1,20 @@
 # Forecast model card
 
-**Current published source:** v24.0.3-public.1, 9 October 2026. **Coach contract:** 1.37.0.
+**Current published source:** v24.0.4-public.1, 9 October 2026. **Coach contract:** 1.37.0.
 
 The [October 8 source release](SERVER_RELEASE_2026_10_08.md) replaces the September 21 application snapshot. Earlier sections below remain dated research/deployment records; their selectors and fallback behavior do not describe the current publisher. Fitted assets, working data and the private Windows service installation are excluded.
 
+## Rain review and numerical training correction — 9 October 2026
+
+Local/public v24.0.4 uses `fresh_sequence_ridge_delta_numeric_v4_receipt_training_20261009`. The Ridge recipe, 208 sensor inputs, four arrival/ride targets, daily midnight cutoff and 330-minute embargo are unchanged. Training now retains confirmed sensor revisions and bounds them by each historical origin; completed labels use revisions visible by the training cutoff. Partial receipt namespaces fail closed, and untracked legacy availability remains unknown. This fixes a demonstrated training-data defect. It does **not** establish earlier rain/drop warning.
+
+Two fixed richer temperature/humidity probability candidates were worse than the scalar logistic on the 3,232-case, 34-date historical development cohort: richer logistic Brier/log loss 0.164004/0.392122; richer HGB 0.155886/0.378399; scalar logistic 0.155885/0.365475. The fixed numerical HGB with 240 inputs had MAE 8.489 µg/m³ versus 8.521 with 208 inputs and 8.112 for a receipt-aware fixed-Ridge-recipe reconstruction. That reconstruction corrects historical input availability and does not reproduce the original v3 refresh path or originally fitted asset. These are exposed development results. The inspected October 8/9 cases are separate diagnostics; unsuccessful candidates remain offline.
+
+An originally published October 9 14:14:15 arrival indication gave 52.6% for a ≥20 fall and 20.8% for ≥40, about 72 minutes before the sharp phase. Its numerical point 166.6 missed the completed 90.6 proxy. False warnings and rebound errors remain explicit. Local temperature fell while RH rose. The [journal](journal/2026-10-09-learning-from-a-rain-drop.md) and [release note](SERVER_RAIN_TRAINING_2026_10_09.md) report the source, study and 236 synthetic tests separately. Current classifiers remain sensor-only; confirmed weather coverage is too short to claim demonstrated weather learning. The arrival target still interpolates complete 15-minute medians and can smooth abrupt changes.
+
 ## Source release and arrival distribution — later on 8 October 2026
 
-The public source corresponds to local v24.0.3. The October 9 update changes device presentation and history sampling; the fixed forecast learners below are unchanged. Its fixed Ridge v3 learner publishes the +90 concentration and +90–210 mean/minimum/maximum without numerical selection or persistence substitution. A separately fixed logistic classifier, `receipt_visible_logistic_arrival_change20_40_v1`, predicts a five-class change distribution at exact +90 relative to the issue's trailing five-minute reference. Native class masses supply ≥20/≥40 fall and rise tails and the within-20 outcome. The web focuses on these arrival outcomes; the distinct first-sampled-crossing HGB output remains in the APIs and issue archive.
+The earlier v24.0.3 publication corresponded to that local build. That device-presentation/history update did not change the fixed forecast learners described in this dated section. Its fixed Ridge v3 learner publishes the +90 concentration and +90–210 mean/minimum/maximum without numerical selection or persistence substitution. A separately fixed logistic classifier, `receipt_visible_logistic_arrival_change20_40_v1`, predicts a five-class change distribution at exact +90 relative to the issue's trailing five-minute reference. Native class masses supply ≥20/≥40 fall and rise tails and the within-20 outcome. The web focuses on these arrival outcomes; the distinct first-sampled-crossing HGB output remains in the APIs and issue archive.
 
 The arrival learner uses 28 scalar sensor/time features, completed outcomes before Malaysia midnight, five-minute origins, a 28-day history and a 120-minute origin embargo. Weather and neighboring measurements are not learned inputs to this classifier. The categorical learner and numeric concentration model are separate estimators, not a single jointly fitted trajectory distribution.
 

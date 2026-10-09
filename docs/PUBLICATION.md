@@ -4,7 +4,7 @@ This is a curated public snapshot of the reviewed local dashboard, accompanied b
 
 ## Included
 
-- The October 9 **v24.0.3-public.1 / API 1.37.0** forecasting application: 58 top-level Python modules and 27 selected research/runtime helper source files, under [the scoped forecasting Apache-2.0 license](../app/LICENSE.md).
+- The October 9 **v24.0.4-public.1 / API 1.37.0** forecasting application: 59 top-level Python modules and 27 selected research/runtime helper source files, plus two explicitly offline research prototypes, under [the scoped forecasting Apache-2.0 license](../app/LICENSE.md).
 - Sanitized environment/Coach API documentation.
 - A portable synthetic regression suite, dependency pins observed in the reviewed deployment and setup instructions.
 - Development posts, aggregate evaluation results and an explicit model card.
@@ -87,3 +87,7 @@ Ten original phrase definitions were added and eighteen proved-unused legacy cli
 The installed David-audio v28 passed 64 dashboard, 29 Page 1 playback/recovery and 50 focused status/snapshot/stream checks. The observed status matched the captured server text, spoke in the correct position, and microphone/recognition workers recovered after the full stream. All three actual framebuffers were inspected and the saved −4 °C setting survived the hard reset. The [observed-status record](../firmware/esp32-rlcd/docs/VERIFICATION_OBSERVED_2026_10_09.md) includes final image identities and completed stream timing. No new human listening confirmation or acoustic-recognition accuracy claim is made.
 
 The current user-selected saved indoor offset is −4 °C, now also the fallback for a board without a valid saved value. Existing NVS settings are retained; historical v27's −4.8 °C comparisons and checks are unchanged. This is a configuration preference, without new calibration evidence. No new photos, recordings, private identifiers or binaries are published, and no new physical-hearing evidence is claimed. The public eSpeak variant remains unflashed and acoustically untested.
+
+## October 9 rain review and causal numerical training
+
+The subsequent **v24.0.4-public.1** release adds receipt-aware numerical training, a separately identified Ridge v4 learner/asset, eight focused synthetic checks and two offline rain-precursor prototype modules. The [release note](SERVER_RAIN_TRAINING_2026_10_09.md), [journal](journal/2026-10-09-learning-from-a-rain-drop.md) and [new source manifest](research/2026-10-09-rain-training-source-release.json) identify the included 86 runtime/helper files, 19 ported test modules, two prototypes and 236 passing public checks. The previously published October 9 manifest remains the dated v24.0.3 record. The richer research candidates did not justify deployment; this release makes no improved early-warning claim. New selected aggregate/event values are disclosed without raw observations, operational payloads, private input identifiers, fitted weights or photographs. Firmware changes and verification remain separately dated.
