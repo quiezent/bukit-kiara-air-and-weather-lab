@@ -298,9 +298,13 @@ void BoardSpeaker::powerDownCodec() {
   }
 }
 
+void BoardSpeaker::mute() {
+  digitalWrite(kAmplifierEnable, LOW);
+}
+
 void BoardSpeaker::end() {
   // Must run after the playback task has finished, before microphone restart.
-  digitalWrite(kAmplifierEnable, LOW);
+  mute();
   ready_ = false;
   if (codecTouched_) {
     powerDownCodec();

@@ -1,6 +1,6 @@
 # LAN data contract for the ESP32 dashboard
 
-The **29-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with unchanged native arrival-change and current-status fields. Its public build/host checks and separately installed David-audio recovery checks passed as documented in the [v29 record](VERIFICATION_AUDIO_RECOVERY_2026_10_09.md); its public eSpeak NG voice remains unflashed. The [v28 observed-status record](VERIFICATION_OBSERVED_2026_10_09.md), [v27 indoor record](VERIFICATION_INDOOR_2026_10_09.md) and [v26 arrival record](VERIFICATION_2026_10_09.md) remain historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
+The **30-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with unchanged native arrival-change and current-status fields. V30 adds local readout-stop controls and removes the displayed/spoken **Observed:** prefix; the [package README](../README.md#v30-verification-9-october-2026) scopes its passing public build/host and separately installed-device checks. Its public eSpeak NG voice remains unflashed. The [v29 recovery record](VERIFICATION_AUDIO_RECOVERY_2026_10_09.md), [v28 observed-status record](VERIFICATION_OBSERVED_2026_10_09.md), [v27 indoor record](VERIFICATION_INDOOR_2026_10_09.md) and [v26 arrival record](VERIFICATION_2026_10_09.md) remain historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
 
 ## Discovery and transport
 
@@ -44,7 +44,7 @@ The concentration estimate, original reference, within-window extrema, first-cro
 
 Primary PM values require `available: true`, a finite nonnegative `pm25_ugm3` within the display range, and role `raw_model_output`, `experimental_model_output` or legacy `experimental_window_mean`. The device never substitutes `reference_pm25_ugm3` for a missing primary model value. Qualification/calibration metadata stays distinct from numerical output; an eligible raw estimate is not treated as an operational recommendation.
 
-`current.display_text` is the server's nonempty dynamic status for the current sensor concentration. The screen preserves it, with an old-data prefix when appropriate. Missing status text is not replaced by a fabricated classification, and invalid/expired current data stays unavailable. This text is independent of the arrival headline.
+`current.display_text` is the server's nonempty dynamic status for the current sensor concentration. Page 1 removes only its leading `Observed: ` prefix for display, preserving the status body and any old-data marker; the API value remains unchanged. Missing status text is not replaced by a fabricated classification, and invalid/expired current data stays unavailable. This text is independent of the arrival headline.
 
 ### Observed-status speech
 
@@ -52,18 +52,18 @@ Page 1 captures `current.display_text` when building its readout snapshot. It sp
 
 | Exact API `current.display_text` | Spoken words |
 | --- | --- |
-| `Observed: Fast PM2.5 rise detected` | Observed: Fast PM2.5 rise detected |
-| `Observed: Fast PM2.5 rebound detected` | Observed: Fast PM2.5 rebound detected |
-| `Observed: Particle rebound may be starting` | Observed: Particle rebound may be starting |
-| `Observed: Recent PM2.5 medians at or below 35 µg/m³` | Observed: Recent PM2.5 medians at or below thirty five micrograms per cubic metre |
-| `Observed: Moist-cooling particle clearing forming` | Observed: Moist cooling particle clearing forming |
-| `Observed: Dry clearing forming` | Observed: Dry clearing forming |
-| `Observed: PM2.5 reduction forming` | Observed: PM2.5 reduction forming |
-| `Observed: Rapid PM2.5 reduction detected` | Observed: Rapid PM2.5 reduction detected |
+| `Observed: Fast PM2.5 rise detected` | Fast PM2.5 rise detected |
+| `Observed: Fast PM2.5 rebound detected` | Fast PM2.5 rebound detected |
+| `Observed: Particle rebound may be starting` | Particle rebound may be starting |
+| `Observed: Recent PM2.5 medians at or below 35 µg/m³` | Recent PM2.5 medians at or below thirty five micrograms per cubic metre |
+| `Observed: Moist-cooling particle clearing forming` | Moist cooling particle clearing forming |
+| `Observed: Dry clearing forming` | Dry clearing forming |
+| `Observed: PM2.5 reduction forming` | PM2.5 reduction forming |
+| `Observed: Rapid PM2.5 reduction detected` | Rapid PM2.5 reduction detected |
 | `Latest sensor reading` | Latest sensor reading |
 | Unknown, missing, null, empty or nonstring text with otherwise eligible current data | Observed status unavailable |
 
-PM2.5 is pronounced **P M two point five**. The eight observed mappings reuse the recorded **Observed** prefix and a matching fixed body; the neutral and unavailable phrases stand alone. There is no runtime arbitrary-text synthesis or derived movement classification. Changing API wording without adding a matching clip causes the unavailable fallback rather than a transcript without corresponding audio.
+PM2.5 is pronounced **P M two point five**. V30 speaks the matching fixed body without the recorded **Observed** prefix; the existing audio bank and exact API matching are unchanged. The neutral and unavailable phrases stand alone. There is no runtime arbitrary-text synthesis or derived movement classification. Changing API wording without adding a matching clip causes the unavailable fallback rather than a transcript without corresponding audio.
 
 The status requires the same eligible current observation/concentration as the display, including a valid source epoch and PM value. Expired or future observations, unavailable current data and invalid PM suppress it entirely. Eligible old data retains the single **Outdoor data is old** announcement before current PM, without repeating it for the status. The existing seven-minute old / fifteen-minute expiry rules below are unchanged. Text, clip IDs and values are captured together; later server polling cannot change a running narration.
 
@@ -103,7 +103,7 @@ Legacy payloads omitting `minimum_maximum` can retain `range_kind: "empirical_q1
 
 ### Sessions and window weather
 
-`forecast.sessions.morning` and `.afternoon` contain `issued_epoch`, `start_epoch`, `end_epoch`, primary `pm` and `weather`. The example uses 09:00–11:00 and 14:00–16:00 Malaysia time. Speech compares valid primary values at displayed one-decimal precision only when the forecast is fresh, session issues match it and the windows remain valid. It speaks this/tomorrow morning/afternoon from the actual dates; expired or unsupported dates are not silently relabelled. `tennis_morning` is a separate 07:00–09:00 weather-only window.
+`forecast.sessions.morning` and `.afternoon` contain `issued_epoch`, `start_epoch`, `end_epoch`, primary `pm` and `weather`. The example uses 09:00–11:00 and 14:00–16:00 Malaysia time. Speech compares valid primary values at displayed one-decimal precision only when the forecast is fresh, session issues match it and the windows remain valid. It speaks this/tomorrow morning/afternoon from the actual dates; expired or unsupported dates are not silently relabelled. `tennis_morning` is a separate 07:00–09:00 weather-only window; Page 1 labels its displayed wind value in **km/h**.
 
 Modern ride/session weather must provide `coverage_verified: true` and `coverage.complete: true`, plus `available`, `fresh`, `fetched_epoch`, `rain_chance_max_pct`, `rain_mm`, `feels_like_max_c`, `humidity_mean_pct`, `wind_mean_kmh` and `gust_max_kmh`. It must cover the complete target window. Incomplete coverage suppresses the window's weather/readout warnings rather than presenting a partial summary as complete. Genuine legacy payloads without either coverage field retain their earlier availability behavior. Fetch clocks must not postdate the forecast issue.
 
@@ -159,6 +159,19 @@ Temperatures are in °C and RH is in percent. RH is limited to **0–100%** afte
 Unavailable measurements are returned as JSON `null`. Indoor values and their ranges on every page and in spoken summaries use the corrected readings. Outdoor observations, forecasts and history are unaffected.
 
 Changing the offset resets the corrected temperature and RH minima/maxima. Applying a setting does not take a new measurement or refresh the sample clock; a stale or invalid retained sample remains unavailable until a valid reading arrives.
+
+## Local board readout control
+
+Release physical **KEY** to start reading the selected page, or to request a stop while reading. The newline-terminated USB command **`KEY`** invokes exactly the same toggle; it is not a weather-producer API command. During playback the footer shows **Voice: reading** on the left, Wi-Fi RSSI in the center and **[KEY] Stop Reading** on the right.
+
+The board's own `GET /status` adds these fields within `readout`:
+
+| Field | Meaning |
+| --- | --- |
+| `stopped` | Count of intentional stops handled during readout cleanup, separate from natural `completed` streams |
+| `stop_requested` | Whether the active readout has a stop request; false after cleanup |
+
+A stop mutes playback and lets the player release the speaker and resume microphone capture through the existing recovery/quiet-tail handoff. Voice read commands and BOOT navigation are unchanged.
 
 ## Local board audio diagnostics
 

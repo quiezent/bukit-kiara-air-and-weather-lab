@@ -123,6 +123,18 @@ void footer(U8G2 &gfx, const DashboardContext &context) {
   String signal = context.wifiConnected ? "WiFi: " + String(context.wifiRssi) + "dBm" : "WiFi: --";
   int signalWidth = width(gfx, signal.c_str());
   int signalX = (400 - signalWidth) / 2;
+  if (context.readoutActive) {
+    // Playback has a persistent action of its own, regardless of transient
+    // recognition acknowledgements or audio error hints.
+    text(gfx, 8, 295, "Voice: reading", signalX - 16);
+    text(gfx, signalX, 295, signal);
+    int keyWidth = buttonIconWidth(gfx, "KEY");
+    int stopWidth = width(gfx, "Stop Reading");
+    int keyX = 392 - stopWidth - 6 - keyWidth;
+    buttonIcon(gfx, keyX, "KEY");
+    text(gfx, keyX + keyWidth + 6, 295, "Stop Reading", stopWidth);
+    return;
+  }
   buttonIcon(gfx, 8, "KEY");
   int labelX = 8 + buttonIconWidth(gfx, "KEY") + 6;
   text(gfx, labelX, 295, "Read Info", signalX - labelX - 8);
@@ -147,7 +159,11 @@ void footer(U8G2 &gfx, const DashboardContext &context) {
   text(gfx, bootX + bootWidth + 6, 295, "Next Page", nextWidth);
 }
 
-void currentStatus(U8G2 &gfx, const String &status) {
+void currentStatus(U8G2 &gfx, String status) {
+  // Shorten only the drawn label. The API-backed status helper, payload and
+  // freshness prefix retain their complete source wording.
+  if (status.startsWith("Observed: ")) status.remove(0, 10);
+  else if (status.startsWith("OLD: Observed: ")) status.remove(5, 10);
   constexpr int maxWidth = 187;
   if (width(gfx, status.c_str()) <= maxWidth) {
     text(gfx, 12, 111, status, maxWidth);
@@ -205,7 +221,7 @@ void overview(U8G2 &gfx, const DashboardContext &context) {
     text(gfx, 100 + i * 100, 162, label, 95);
   }
   gfx.drawHLine(8, 175, 384);
-  gfx.drawVLine(207, 184, 78);
+  gfx.drawVLine(207, 184, 88);
   gfx.setFont(u8g2_font_helvB10_tf);
   text(gfx, 12, 195, "MTB  +90 MIN", 187);
   bool nearWindowOk = forecastOk && near["target_epoch"].is<uint32_t>()
@@ -232,7 +248,12 @@ void overview(U8G2 &gfx, const DashboardContext &context) {
   gfx.setFont(u8g2_font_helvB14_tf);
   text(gfx, 221, 237, tennisWeather ? String(windowWeatherFresh(context, tw) ? "Rain " : "OLD rain ") + value(tw["rain_chance_max_pct"]) + "%" : "Rain --", 175);
   gfx.setFont(u8g2_font_helvB08_tf);
-  text(gfx, 221, 258, tennisWeather ? "Feels " + value(tw["feels_like_max_c"], 1) + "C | Wind " + value(tw["wind_mean_kmh"]) : "Weather unavailable", 175);
+  if (tennisWeather) {
+    // Give wind its own row so its complete value and km/h fit even with
+    // three digits, without reducing the established bold text spacing.
+    text(gfx, 221, 255, "Feels " + value(tw["feels_like_max_c"], 1) + "C", 175);
+    text(gfx, 221, 271, "Wind " + value(tw["wind_mean_kmh"]) + " km/h", 175);
+  } else text(gfx, 221, 258, "Weather unavailable", 175);
   footer(gfx, context);
 }
 

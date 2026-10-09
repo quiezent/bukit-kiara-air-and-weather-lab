@@ -74,6 +74,12 @@ I deployed v29 and built [29-public.1](firmware/esp32-rlcd/README.md) with persi
 
 The installed build passed **64 dashboard checks and 88 recovery checks** over nearly six minutes: two real saturation faults, ten manual resets and **twelve successful repairs in twelve attempts**. Full readouts on all three pages completed, including overview playback during a fault, and the board finished ready with both microphones active. The [new verification record](firmware/esp32-rlcd/docs/VERIFICATION_AUDIO_RECOVERY_2026_10_09.md) gives timing and evidence limits. Forecast/model outputs, vocabulary, confidence and recordings are unchanged. I have no new human listening confirmation; this short stress run does not identify the original cause or establish an hours-long cure.
 
+## Readout controls, 9 October 2026
+
+I added a second KEY click to stop the current page's readout. While reading, the footer shows **Voice: reading**, centered Wi-Fi RSSI and **[KEY] Stop Reading**. Page 1 now displays and speaks the status body without **Observed:**, and tennis wind includes **km/h**. The server's status text and weather values, prerecorded clips, recognition models and command threshold are unchanged.
+
+I deployed v30 and built the matching [30-public.1 source](firmware/esp32-rlcd/README.md#v30-verification-9-october-2026). Its warning-free build, eleven native host executables, 23 Python helpers and five flash-validation checks passed. The installed device passed **64 dashboard and 36 control checks**, covering a stop and full restart on each page, with microphones/recognition resumed and no reboot or AFE repair. I inspected the normal/reading footers and wind units. Its public eSpeak voice remains unflashed, and I have no new human listening confirmation; the earlier [v29 recovery record](firmware/esp32-rlcd/docs/VERIFICATION_AUDIO_RECOVERY_2026_10_09.md) retains its historical evidence.
+
 ## Forecast work, 8 October 2026
 
 The October 8 service used **v24.0.2 / API 1.37.0**, published then as **v24.0.2-public.1**. I publish literal outputs from a fixed fresh-sequence Ridge model for the +90 point and ride mean/minimum/maximum, and a separate logistic classifier for ≥20/≥40 arrival changes. The first-sampled-crossing HGB output remains in the APIs; the web card focuses on arrival. The publisher does not replace a PM2.5 number with persistence or use a runtime performance selector. Morning and Afternoon retain their separate fixed models, with the Afternoon provisioning limitation documented in the release guide.

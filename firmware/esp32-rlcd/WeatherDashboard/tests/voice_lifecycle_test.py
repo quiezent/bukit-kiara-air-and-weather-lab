@@ -109,11 +109,13 @@ using PlaybackQuietTail = VoiceRuntime::PlaybackQuietTail;
 @@READOUT@@
 
 static unsigned microphoneBegins = 0, microphoneEnds = 0, microphoneReads = 0;
-static unsigned speakerBegins = 0, speakerEnds = 0, speakerWrites = 0;
+static unsigned speakerBegins = 0, speakerEnds = 0, speakerWrites = 0, speakerMutes = 0;
 static unsigned resetBuffers = 0, resetVads = 0, modelCleans = 0;
 static int resetBufferResult = 1, resetVadResult = 1, feedResult = 1;
 static bool microphoneBeginFails = false, microphoneReleaseFails = false, readInFlight = false;
 static bool speakerOwned = false, speakerBeginFails = false, speakerWriteFails = false;
+static bool speakerWriteActive = false;
+static size_t clipSampleCount = 64;
 static std::function<void()> readHook, feedHook, fetchHook, writeHook;
 static bool missingFetch = false;
 static unsigned feedCalls = 0, fetchCalls = 0;
@@ -139,13 +141,19 @@ size_t BoardMicrophone::readInterleaved(int16_t *destination, size_t frames, uin
 }
 BoardSpeaker::~BoardSpeaker() = default;
 bool BoardSpeaker::begin() { ++speakerBegins; if (speakerBeginFails) return false; speakerOwned = true; return true; }
-void BoardSpeaker::end() { ++speakerEnds; speakerOwned = false; }
+void BoardSpeaker::mute() { ++speakerMutes; }
+void BoardSpeaker::end() {
+  check(!speakerWriteActive, "speaker cleanup never overlaps an active PCM write");
+  ++speakerEnds; speakerOwned = false;
+}
 size_t BoardSpeaker::write(const int16_t *, size_t samples, uint32_t) {
+  speakerWriteActive = true;
   ++speakerWrites; if (writeHook) writeHook();
+  speakerWriteActive = false;
   if (speakerWriteFails) { std::strcpy(error_, "scripted speaker failure"); return 0; }
   return samples;
 }
-SpeechClipData speechClipData(SpeechClip) { static const int16_t pcm[64]{}; return {pcm, 64}; }
+SpeechClipData speechClipData(SpeechClip) { static const int16_t pcm[4096]{}; return {pcm, clipSampleCount}; }
 static int mockFeed(esp_afe_sr_data_t *, const int16_t *) { ++feedCalls; if (feedHook) feedHook(); return feedResult; }
 static afe_fetch_result_t *mockFetch(esp_afe_sr_data_t *, uint32_t wait) {
   ++fetchCalls; delay(missingFetch ? wait : 16); if (fetchHook) fetchHook();
@@ -162,11 +170,12 @@ static void resetBoundary() {
   clockMs = 1000; delayHook = {}; readHook = {}; feedHook = {}; fetchHook = {}; writeHook = {};
   notificationHook = {}; notificationTakes = notifications = deletedTasks = 0;
   microphoneBegins = microphoneEnds = microphoneReads = 0;
-  speakerBegins = speakerEnds = speakerWrites = 0;
+  speakerBegins = speakerEnds = speakerWrites = speakerMutes = 0;
   resetBuffers = resetVads = modelCleans = feedCalls = fetchCalls = 0;
   resetBufferResult = resetVadResult = feedResult = 1;
   microphoneBeginFails = microphoneReleaseFails = readInFlight = false;
   speakerOwned = speakerBeginFails = speakerWriteFails = createTaskFails = missingFetch = false;
+  speakerWriteActive = false; clipSampleCount = 64;
   speakerTask = nullptr; speakerArgument = nullptr; fetchFrame = {}; fetchFrame.data = frameSamples;
 }
 struct Fixture {
@@ -348,9 +357,100 @@ static void taskAndSpeakerFailures() {
   check(active.completed() == 1 && !active.lastError()[0] && during.state.recoveryAttempts == 0,
       "fault during speaker playback leaves readout successful and defers repair");
 }
+static void cancelledReadout() {
+  Fixture before; before.fault(); before.parked();
+  ReadoutPlayer queued; SpeechPlaylist playlist;
+  playlist.add(SpeechClip::N0); playlist.add(SpeechClip::N1); playlist.add(SpeechClip::N2);
+  check(!queued.stop() && !queued.stopRequested(), "stopping an idle player is a no-op");
+  check(queued.start(playlist, before.voice), "cancel-before-start readout begins");
+  const uint32_t stoppedAt = clockMs;
+  check(queued.stop() && queued.stopRequested() && speakerMutes == 1,
+      "stop immediately mutes while publishing cancellation");
+  check(queued.stop() && speakerMutes == 1 && !queued.stopped(),
+      "repeated cancellation is idempotent before cleanup");
+  queued.update(before.voice); before.voice.update(queued.busy());
+  check(queued.busy() && !speakerEnds && !microphoneBegins && !before.state.recoveryAttempts,
+      "stop does not release I2S or resume/recover while the worker is pending");
+  speakerTask(speakerArgument);
+  check(!speakerWrites && clockMs == stoppedAt,
+      "cancel before worker start skips all clips, silence and drain delay");
+  queued.update(before.voice);
+  check(!queued.busy() && !queued.stopRequested() && queued.stopped() == 1 && !queued.completed() && !queued.lastError()[0]
+      && speakerEnds == 1 && !microphoneBegins,
+      "intentional stop cleans up exactly once without a completion or error");
+  queued.update(before.voice);
+  check(queued.stopped() == 1 && speakerEnds == 1 && !queued.stop(), "idle cleanup and stop cannot double count");
+  before.voice.update(false); delay(1000); before.voice.update(false);
+  check(before.voice.status().ready && before.voice.status().recoveryCount == 1,
+      "faulted recognition recovers only after cancelled playback becomes idle");
+  delayHook = [&]() { before.state.capturePaused.store(before.state.capturePauseRequested.load()); };
+  check(queued.start(playlist, before.voice) && !queued.stopRequested(), "next readout clears cancellation");
+  delayHook = {}; speakerTask(speakerArgument); queued.update(before.voice);
+  check(!queued.busy() && queued.completed() == 1 && queued.stopped() == 1
+      && queued.samplesWritten() == 192 && !queued.lastError()[0], "full playback succeeds after an intentional stop");
+
+  Fixture within; within.fault(); within.parked(); clipSampleCount = 3200;
+  ReadoutPlayer writing;
+  check(writing.start(playlist, within.voice), "mid-write cancellation readout begins");
+  const uint32_t writeStarted = clockMs;
+  writeHook = [&]() {
+    check(writing.stop() && speakerMutes == 1 && speakerWriteActive, "stop can mute during an in-flight write");
+    writing.update(within.voice); within.voice.update(writing.busy());
+    check(writing.busy() && !speakerEnds && speakerOwned && !within.state.recoveryAttempts,
+        "in-flight cancellation waits for the writer acknowledgement");
+  };
+  speakerTask(speakerArgument); writeHook = {};
+  check(speakerWrites == 1 && writing.samplesWritten() == 1600 && clockMs == writeStarted,
+      "mid-write stop keeps accepted sample count and skips remaining chunks/clips/tail");
+  writing.update(within.voice);
+  check(!writing.busy() && writing.stopped() == 1 && !writing.completed() && !writing.lastError()[0],
+      "mid-write stop is a successful cancellation");
+
+  Fixture tail; tail.fault(); tail.parked();
+  ReadoutPlayer flushing; SpeechPlaylist shortPlaylist; shortPlaylist.add(SpeechClip::N0);
+  check(flushing.start(shortPlaylist, tail.voice), "tail cancellation readout begins");
+  const uint32_t tailStarted = clockMs;
+  writeHook = [&]() { if (speakerWrites == 2) check(flushing.stop(), "stop accepted during first silence write"); };
+  speakerTask(speakerArgument); writeHook = {}; flushing.update(tail.voice);
+  check(speakerWrites == 2 && flushing.samplesWritten() == 64 && clockMs == tailStarted
+      && flushing.stopped() == 1 && !flushing.completed() && !flushing.lastError()[0],
+      "tail stop skips remaining silence and normal drain without changing PCM count");
+
+  Fixture failure; failure.fault(); failure.parked();
+  ReadoutPlayer broken; check(broken.start(shortPlaylist, failure.voice), "concurrent-error cancellation begins");
+  writeHook = [&]() { check(broken.stop(), "cancellation can accompany a write error"); speakerWriteFails = true; };
+  speakerTask(speakerArgument); writeHook = {}; broken.update(failure.voice);
+  check(!broken.busy() && !broken.completed() && broken.stopped() == 1
+      && std::strstr(broken.lastError(), "scripted speaker"), "a real write failure is retained despite user cancellation");
+
+  Fixture late; late.fault(); late.parked();
+  ReadoutPlayer finished; check(finished.start(shortPlaylist, late.voice), "natural completion test begins");
+  speakerTask(speakerArgument);
+  check(!finished.stop() && !finished.stopRequested() && !speakerMutes,
+      "a worker already done naturally is not reclassified as stopped");
+  finished.update(late.voice);
+  check(finished.completed() == 1 && !finished.stopped(), "late click preserves natural completion count");
+
+  Fixture during; const uint32_t started = clockMs;
+  delayHook = [&]() { if (uint32_t(clockMs - started) >= 1) during.state.capturePaused.store(during.state.capturePauseRequested.load()); };
+  ReadoutPlayer active; check(active.start(shortPlaylist, during.voice), "healthy playback for fault-during-stop begins"); delayHook = {};
+  writeHook = [&]() {
+    during.fault(); during.parked(); check(active.stop(), "stop accepted when recognition faults during playback");
+    active.update(during.voice); during.voice.update(active.busy());
+    check(!during.state.recoveryAttempts && speakerOwned && !speakerEnds,
+        "fault-during-stop cannot reset/release the active writer");
+  };
+  speakerTask(speakerArgument); writeHook = {}; active.update(during.voice);
+  check(!active.busy() && active.stopped() == 1 && !active.completed() && !active.lastError()[0]
+      && !during.state.recoveryAttempts && during.state.recoveryPending.load(),
+      "cancelled speaker completion preserves pending voice fault");
+  during.voice.update(active.busy()); delay(1000); during.voice.update(active.busy());
+  check(during.voice.status().ready && during.voice.status().recoveryCount == 1,
+      "deferred voice recovery resumes after fault-during-stop cleanup");
+}
 int main() {
   gatesAndSnapshot(); handoffAndSpeakerOnly(); retriesAndManualDeferral();
-  actualWorkersAndQuietTail(); taskAndSpeakerFailures();
+  actualWorkersAndQuietTail(); taskAndSpeakerFailures(); cancelledReadout();
   std::printf("PASS: %zu checks on production lifecycle methods, actual persistent feed/detect workers, quiet suppression and ReadoutPlayer; no device/SDK/model recreation\n", checks);
 }
 """

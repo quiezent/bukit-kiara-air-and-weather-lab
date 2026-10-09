@@ -159,7 +159,8 @@ bool overview(Readout &out, const DashboardContext &context, uint32_t now) {
   if (currentOk && current["observed_epoch"].is<uint32_t>()
       && forecastPmNumberValid(current["pm25_ugm3"])) {
     const ObservedStatusPhrase status = observedStatusPhrase(current["display_text"]);
-    if (status.observed && !out.phrase(SpeechClip::Observed, "Observed:")) return false;
+    // The server prefix still identifies exact labels, but only the status
+    // body is spoken; its matching recording is already self-contained.
     if (!out.announcement(status.clip, status.words)) return false;
   }
   if (!out.measurement(SpeechClip::OutdoorTemperature, "Outdoor temperature", number(current["temperature_c"]),

@@ -18,6 +18,7 @@ struct DashboardContext {
   uint8_t page = 0;
   const char *navigationHint = "Read Info";
   const char *voiceHint = nullptr;
+  bool readoutActive = false;
 };
 
 uint32_t dashboardNow(const DashboardContext &context);

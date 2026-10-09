@@ -112,8 +112,8 @@ static DashboardContext dashboardContext() {
   context.wifiRssi = context.wifiConnected ? WiFi.RSSI() : 0;
   context.batteryV = batteryVoltage;
   context.page = currentPage;
-  if (voiceControl.status().ready && voiceAcknowledgement) context.voiceHint = voiceHint;
-  else if (readoutPlayer.busy()) context.voiceHint = "Voice: reading";
+  context.readoutActive = readoutPlayer.busy();
+  if (!context.readoutActive && voiceControl.status().ready && voiceAcknowledgement) context.voiceHint = voiceHint;
   return context;
 }
 
@@ -181,7 +181,7 @@ static String statusJson() {
   const bool connected = WiFi.status() == WL_CONNECTED;
   const uint32_t batteryAdcMv = readBatteryAdcMillivolts();
   batteryVoltage = batteryAdcMv * 3.0f / 1000.0f;
-  String out = "{\"firmware\":\"weather-dashboard-29-public.1\",\"connected\":";
+  String out = "{\"firmware\":\"weather-dashboard-30-public.1\",\"connected\":";
   out += connected ? "true" : "false";
   out += ",\"ssid\":" + jsonString(ssid);
   out += ",\"ip\":" + jsonString(connected ? WiFi.localIP().toString() : "");
@@ -336,6 +336,8 @@ static String statusJson() {
   out += ",\"readout\":{\"busy\":" + String(readoutPlayer.busy() ? "true" : "false");
   out += ",\"requests\":" + String(readoutRequests);
   out += ",\"completed\":" + String(readoutPlayer.completed());
+  out += ",\"stopped\":" + String(readoutPlayer.stopped());
+  out += ",\"stop_requested\":" + String(readoutPlayer.stopRequested() ? "true" : "false");
   out += ",\"samples_written\":" + String(readoutPlayer.samplesWritten());
   out += ",\"planned_seconds\":" + String(readoutPlayer.plannedSamples() / 16000.0f, 2);
   out += ",\"page\":" + String(lastReadoutPage);
@@ -344,7 +346,7 @@ static String statusJson() {
   out += ",\"last_text\":" + jsonString(lastReadoutText);
   out += ",\"observed_epoch\":" + String(lastReadoutObservedEpoch);
   out += ",\"forecast_fetched_epoch\":" + String(lastReadoutForecastEpoch) + "}";
-  out += ",\"buttons\":{\"key_gpio\":18,\"key_action\":\"read_info\",\"boot_gpio\":0,\"boot_action\":\"next_page\"}";
+  out += ",\"buttons\":{\"key_gpio\":18,\"key_action\":\"read_info_or_stop\",\"boot_gpio\":0,\"boot_action\":\"next_page\"}";
   out += ",\"uptime_seconds\":" + String(millis() / 1000) + "}";
   return out;
 }
@@ -416,11 +418,19 @@ static bool requestReadout() {
   return started;
 }
 
+static void handleReadoutKey() {
+  if (!readoutPlayer.busy()) { requestReadout(); return; }
+  if (!readoutPlayer.stop()) return;
+  voiceAcknowledgement = false;
+  forceDraw = true;
+  Serial.println("{\"event\":\"weather_readout_stop_requested\"}");
+}
+
 static void readButtons() {
   static ReleasedButton key, boot;
   uint32_t now = millis();
   if (boot.update(digitalRead(0) == HIGH, now)) selectPage(nextDashboardPage(currentPage));
-  if (key.update(digitalRead(18) == HIGH, now)) requestReadout();
+  if (key.update(digitalRead(18) == HIGH, now)) handleReadoutKey();
 }
 
 static void processVoiceCommands() {
@@ -506,6 +516,8 @@ static void handleCommand(const String &line) {
     return;
   }
   if (line == "READINFO") { requestReadout(); return; }
+  // Exercise the exact physical KEY action from the optional USB console.
+  if (line == "KEY") { handleReadoutKey(); return; }
   if (line == "REFRESH" || line == "DISCOVER") {
     weatherClient.refresh(line == "DISCOVER");
     Serial.println("{\"event\":\"weather_refresh_requested\"}");
@@ -571,7 +583,7 @@ void setup() {
   WiFi.setAutoReconnect(true);
   server.on("/status", HTTP_GET, []() { server.send(200, "application/json", statusJson()); });
   server.on("/indoor-correction", HTTP_POST, handleIndoorCorrection);
-  server.on("/", HTTP_GET, []() { server.send(200, "text/plain", "TTDI Weather dashboard\nKEY: read the displayed page aloud.\nBOOT: next page.\nVoice: next, next page, back, read info, read page, read, overview, page one, forecast, page two, graph, page three. No wake word.\nPOST /read-info to test the same readout as KEY.\nSee /status for microphone, voice and readout status.\n"); });
+  server.on("/", HTTP_GET, []() { server.send(200, "text/plain", "TTDI Weather dashboard\nKEY: read the displayed page aloud; click again to stop.\nBOOT: next page.\nVoice: next, next page, back, read info, read page, read, overview, page one, forecast, page two, graph, page three. No wake word.\nPOST /read-info to start a page readout.\nSee /status for microphone, voice and readout status.\n"); });
   server.on("/read-info", HTTP_POST, []() {
     if (readoutPlayer.busy()) { server.send(409, "application/json", "{\"error\":\"readout_busy\"}"); return; }
     bool started = requestReadout();
@@ -604,7 +616,7 @@ void setup() {
   Serial.println("{\"event\":\"voice_startup\",\"ready\":" + String(voiceReady ? "true" : "false")
       + ",\"error\":" + (voiceReady ? String("null") : jsonString(voiceControl.status().error)) + "}");
   weatherClient.begin();
-  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-29-public.1\"}");
+  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-30-public.1\"}");
   String storedSsid = settings.getString("ssid", "");
   if (storedSsid.length()) beginWifi(storedSsid, settings.getString("password", ""), false);
   drawSetupScreen();

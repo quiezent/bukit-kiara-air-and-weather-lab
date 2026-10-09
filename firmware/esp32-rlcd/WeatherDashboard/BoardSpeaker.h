@@ -28,6 +28,9 @@ class BoardSpeaker {
   // possible partial frame; write() reports DMA acceptance, not acoustic end.
   size_t write(const int16_t* mono, size_t samples, uint32_t timeoutMs);
 
+  // Loop-task cancellation may silence the amplifier during a worker write.
+  // This only changes its GPIO; I2C/I2S ownership remains with write()/end().
+  void mute();
   void end();
   const char* lastError() const { return error_; }
 

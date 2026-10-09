@@ -108,6 +108,8 @@ static void build(DashboardContext &context, SpeechPlaylist &clips, String &text
   assert(!text.str().empty() && text.str().back() == '.');
   for (size_t i = 0; i < clips.count; ++i) assert(clips.clips[i] < C::Count);
   assert(!count(clips, C::Micrograms));
+  assert(!count(clips, C::Observed)); // Retained recording is omitted from narration.
+  lacks(text, "Observed:");
   // Crossing events remain diagnostic data. Retired recordings are absent
   // from the enum, and their obsolete meaning must never enter narration.
   for (const char *legacy : {"First rise", "First drop", "Rise of twenty or more",
@@ -309,11 +311,11 @@ static void observedStatusReadout() {
     t.d["current"]["display_text"] = source;
     t.page(0);
     const std::string expected = std::string("Current outdoor PM2.5 162.2. ")
-        + source + ". Outdoor temperature 27.6 degrees Celsius.";
+        + label.body + ". Outdoor temperature 27.6 degrees Celsius.";
     contains(t.text, expected.c_str());
-    assert(count(t.clips, C::Observed) == 1 && count(t.clips, label.clip) == 1 && statusCount() == 2);
+    assert(count(t.clips, C::Observed) == 0 && count(t.clips, label.clip) == 1 && statusCount() == 1);
     sequence(t.clips, {C::CurrentPM25, C::N1, C::Hundred, C::N60, C::N2,
-        C::Point, C::N2, C::Observed, label.clip, C::OutdoorTemperature});
+        C::Point, C::N2, label.clip, C::OutdoorTemperature});
     contains(t.text, "No change on arrival, 78.8 percent.");
     assert(duration(t.clips) < 60 && t.clips.count < SpeechPlaylist::kCapacity);
     if (duration(t.clips) > longest) { longest = duration(t.clips); longestCount = t.clips.count; }
@@ -324,13 +326,13 @@ static void observedStatusReadout() {
     t.d["forecast"]["fresh"] = false;
     t.d["forecast"]["near90"]["pm25_ugm3"] = 9999.9;
     t.page(0);
-    assert(statusCount() == 2 && count(t.clips, C::CurrentDataOld) == 1);
+    assert(statusCount() == 1 && count(t.clips, C::CurrentDataOld) == 1);
     assert(duration(t.clips) < 60 && t.clips.count < SpeechPlaylist::kCapacity);
     if (duration(t.clips) > longestComplex) {
       longestComplex = duration(t.clips); longestComplexCount = t.clips.count;
     }
     for (unsigned page : {1u, 2u}) {
-      t.page(page); assert(statusCount() == 0); lacks(t.text, source.c_str());
+      t.page(page); assert(statusCount() == 0); lacks(t.text, label.body);
     }
   }
   printf("Longest observed Page 1: %.2fs, %zu/%zu clip IDs\n", longest, longestCount, SpeechPlaylist::kCapacity);
@@ -372,10 +374,10 @@ static void observedStatusReadout() {
     t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
     t.d["current"]["observed_epoch"] = now - sourceAge;
     t.page(0);
-    assert(statusCount() == (sourceAge <= 900 ? 2 : 0));
+    assert(statusCount() == (sourceAge <= 900 ? 1 : 0));
     assert(count(t.clips, C::CurrentDataOld) == (sourceAge > 420 && sourceAge <= 900 ? 1 : 0));
     if (sourceAge > 420 && sourceAge <= 900)
-      contains(t.text, "Outdoor data is old. Current outdoor PM2.5 162.2. Observed: Particle rebound may be starting.");
+      contains(t.text, "Outdoor data is old. Current outdoor PM2.5 162.2. Particle rebound may be starting.");
   }
   // Missing/nonboolean freshness is old, matching the screen. It does not erase
   // a still-available cached observation or duplicate the old-current warning.
@@ -386,7 +388,7 @@ static void observedStatusReadout() {
     if (freshState == 2) t.d["current"]["fresh"] = nullptr;
     if (freshState == 3) t.d["current"]["fresh"] = 1;
     if (freshState == 4) t.d["current"]["fresh"] = "true";
-    t.page(0); assert(statusCount() == 2 && count(t.clips, C::CurrentDataOld) == 1);
+    t.page(0); assert(statusCount() == 1 && count(t.clips, C::CurrentDataOld) == 1);
   }
   // The status never bypasses clock typing, source expiry or numerical validity.
   for (unsigned invalid = 0; invalid < 12; ++invalid) {
@@ -413,11 +415,11 @@ static void observedStatusReadout() {
   t.d["current"]["pm25_ugm3"] = nullptr; t.page(0); assert(statusCount() == 0);
   for (float endpoint : {0.0f, 9999.9f}) {
     t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
-    t.d["current"]["pm25_ugm3"] = endpoint; t.page(0); assert(statusCount() == 2);
+    t.d["current"]["pm25_ugm3"] = endpoint; t.page(0); assert(statusCount() == 1);
   }
   t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
   t.d["weather"]["available"] = false; t.d["forecast"]["available"] = false;
-  t.page(0); assert(statusCount() == 2); // Forecast availability does not gate observations.
+  t.page(0); assert(statusCount() == 1); // Forecast availability does not gate observations.
 }
 static void first20Semantics() {
   Test t; JsonObject event = t.d["forecast"]["near90"]["first20"].as<JsonObject>();
@@ -818,7 +820,7 @@ static void arrivalProbabilityReadout() {
 int main() {
   routingAndSnapshot(); demoReadoutDisclosure(); rainIntervalsAndValues(); observedStatusReadout(); first20Semantics();
   sessionComparisonAndWarnings(); rangeHistoryIndoorBattery(); capacityDurationAndReset(); modernForecastSemantics(); arrivalProbabilityReadout();
-  puts("PASS: strict demo provenance, nullable point reference independence, exact observed status transcript/audio, freshness/expiry/type guards and snapshot; native arrival winner probability, independent legacy crossing decoder, ties, rounding, malformed/stale/expired suppression, modern min/max and coverage");
+  puts("PASS: strict demo provenance, nullable point reference independence, observed status body without narration prefix, freshness/expiry/type guards and snapshot; native arrival winner probability, independent legacy crossing decoder, ties, rounding, malformed/stale/expired suppression, modern min/max and coverage");
 }
 """
 
