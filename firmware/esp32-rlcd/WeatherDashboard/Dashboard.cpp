@@ -123,23 +123,11 @@ void footer(U8G2 &gfx, const DashboardContext &context) {
   String signal = context.wifiConnected ? "WiFi: " + String(context.wifiRssi) + "dBm" : "WiFi: --";
   int signalWidth = width(gfx, signal.c_str());
   int signalX = (400 - signalWidth) / 2;
-  if (context.readoutActive) {
-    // Playback has a persistent action of its own, regardless of transient
-    // recognition acknowledgements or audio error hints.
-    text(gfx, 8, 295, "Voice: reading", signalX - 16);
-    text(gfx, signalX, 295, signal);
-    int keyWidth = buttonIconWidth(gfx, "KEY");
-    int stopWidth = width(gfx, "Stop Reading");
-    int keyX = 392 - stopWidth - 6 - keyWidth;
-    buttonIcon(gfx, keyX, "KEY");
-    text(gfx, keyX + keyWidth + 6, 295, "Stop Reading", stopWidth);
-    return;
-  }
   buttonIcon(gfx, 8, "KEY");
   int labelX = 8 + buttonIconWidth(gfx, "KEY") + 6;
-  text(gfx, labelX, 295, "Read Info", signalX - labelX - 8);
+  text(gfx, labelX, 295, context.readoutActive ? "Stop Reading" : "Read Info", signalX - labelX - 8);
   text(gfx, signalX, 295, signal);
-  if (context.voiceHint && context.voiceHint[0]) {
+  if (!context.readoutActive && context.voiceHint && context.voiceHint[0]) {
     String acknowledgement = context.voiceHint;
     int availableWidth = 392 - signalX - signalWidth - 8;
     // Fit before positioning so even a long acknowledgement stays right

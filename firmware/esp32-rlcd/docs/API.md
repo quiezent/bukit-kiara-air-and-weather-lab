@@ -1,6 +1,6 @@
 # LAN data contract for the ESP32 dashboard
 
-The **30-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with unchanged native arrival-change and current-status fields. V30 adds local readout-stop controls and removes the displayed/spoken **Observed:** prefix; the [package README](../README.md#v30-verification-9-october-2026) scopes its passing public build/host and separately installed-device checks. Its public eSpeak NG voice remains unflashed. The [v29 recovery record](VERIFICATION_AUDIO_RECOVERY_2026_10_09.md), [v28 observed-status record](VERIFICATION_OBSERVED_2026_10_09.md), [v27 indoor record](VERIFICATION_INDOOR_2026_10_09.md) and [v26 arrival record](VERIFICATION_2026_10_09.md) remain historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
+The **31-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with unchanged native arrival-change and current-status fields. V31 changes only the reading footer and version; v30 added local readout-stop controls and removed the displayed/spoken **Observed:** prefix. The [package README](../README.md#v31-verification-9-october-2026) scopes current verification and preserves the historical v30 results. Its public eSpeak NG voice remains unflashed. The [v29 recovery record](VERIFICATION_AUDIO_RECOVERY_2026_10_09.md), [v28 observed-status record](VERIFICATION_OBSERVED_2026_10_09.md), [v27 indoor record](VERIFICATION_INDOOR_2026_10_09.md) and [v26 arrival record](VERIFICATION_2026_10_09.md) remain historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
 
 ## Discovery and transport
 
@@ -162,7 +162,7 @@ Changing the offset resets the corrected temperature and RH minima/maxima. Apply
 
 ## Local board readout control
 
-Release physical **KEY** to start reading the selected page, or to request a stop while reading. The newline-terminated USB command **`KEY`** invokes exactly the same toggle; it is not a weather-producer API command. During playback the footer shows **Voice: reading** on the left, Wi-Fi RSSI in the center and **[KEY] Stop Reading** on the right.
+Release physical **KEY** to start reading the selected page, or to request a stop while reading. The newline-terminated USB command **`KEY`** invokes exactly the same toggle; it is not a weather-producer API command. During playback the footer shows **[KEY] Stop Reading** on the left, **WiFi: RSSI** in the center and **[BOOT] Next Page** on the right. There is no **Voice: reading** indicator.
 
 The board's own `GET /status` adds these fields within `readout`:
 

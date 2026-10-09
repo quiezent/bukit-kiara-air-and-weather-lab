@@ -9,7 +9,7 @@ This is a curated public snapshot of the reviewed local dashboard, accompanied b
 - A portable synthetic regression suite, dependency pins observed in the reviewed deployment and setup instructions.
 - Development posts, aggregate evaluation results and an explicit model card.
 - The owner's specifically authorized device photographs and three selected ESP32 framebuffer screenshots in the October 8 hardware chapter, with capture/context captions and photo metadata removed.
-- The October 9 **v30-public.1** ESP32 firmware source package, tools, synthetic API example, host tests and component notices in [`firmware/esp32-rlcd`](../firmware/esp32-rlcd/README.md), under its scoped Apache-2.0 license. Its current checks are tracked in the package README; the v25–v29 publication and verification records retain their historical scopes below.
+- The October 9 **v31-public.1** ESP32 firmware source package, tools, synthetic API example, host tests and component notices in [`firmware/esp32-rlcd`](../firmware/esp32-rlcd/README.md), under its scoped Apache-2.0 license. Its current checks are tracked in the package README; the v25–v30 publication and verification records retain their historical scopes below.
 
 ## Excluded
 
@@ -107,3 +107,7 @@ The [audio-recovery record](../firmware/esp32-rlcd/docs/VERIFICATION_AUDIO_RECOV
 ## October 9 readout-control update
 
 The **30-public.1** source lets a second KEY click stop reading and shows that action in the reading footer. USB `KEY` uses the same physical-button handler. Page 1 omits only the displayed/spoken **Observed:** prefix, retaining the API status body, and tennis wind includes **km/h**. Audio assets, voice vocabulary/models/confidence and weather data are unchanged. Public build/host checks passed, including 175 production lifecycle/player checks; the separately installed David-audio device passed 64 dashboard and 36 controls checks, with three stops and three full restarts. The [v30 verification section](../firmware/esp32-rlcd/README.md#v30-verification-9-october-2026) records scope and the public image identity. No new private reports, recordings, binaries or photographs are included; public eSpeak remains unflashed and there is no new human listening confirmation.
+
+## October 9 reading-footer update
+
+The **31-public.1** source changes the reading footer to **[KEY] Stop Reading** left, **WiFi: RSSI** center and **[BOOT] Next Page** right, removing **Voice: reading**. The existing stop/navigation behavior, weather API, audio assets and recognition configuration remain. The warning-free public build, 38 compiled-source matches, five final-image checks and no-port dry run passed. The separately installed device passed 23 focused footer/stop checks. Its [v31 verification section](../firmware/esp32-rlcd/README.md#v31-verification-9-october-2026) scopes this narrow update; broader v30 host/audio results above remain historical evidence, without new listening or public-voice hardware validation. No new photographs, recordings, private reports or compiled images are published.

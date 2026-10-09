@@ -2,7 +2,7 @@
 
 Source snapshot for the **Waveshare ESP32-S3-RLCD-4.2**: three weather pages, local indoor temperature/humidity, button navigation, offline voice commands and spoken page summaries. The board needs its 16 MB flash and 8 MB OPI PSRAM configuration. The firmware obtains outdoor data from a compatible LAN server; it does not run the forecasting models.
 
-The October 9 public variant is **`weather-dashboard-30-public.1`**. KEY now stops an active readout, the reading footer shows that control, Page 1 displays and speaks the current-status body without its **Observed:** prefix, and tennis wind includes **km/h**. Weather data, prerecorded audio, voice commands/models and the 0.80 threshold are unchanged. Public build/host and separately installed-device checks passed as scoped below. The public eSpeak NG voice remains unflashed and acoustically untested; compilation and host tests do not establish recognition accuracy, speaker audibility or forecast skill.
+The October 9 public variant is **`weather-dashboard-31-public.1`**. While reading, the footer shows **[KEY] Stop Reading** on the left, **WiFi: RSSI** in the center and **[BOOT] Next Page** on the right, with no **Voice: reading** indicator. The v30 stop control, prefix-free current status and tennis wind **km/h** remain. This v31 change affects only footer presentation and the version; weather data, audio, voice commands/models and the 0.80 threshold are unchanged. Its checks are scoped below; the v30 build/host and installed-device evidence remains historical. The public eSpeak NG voice remains unflashed and acoustically untested; compilation and host tests do not establish recognition accuracy, speaker audibility or forecast skill.
 
 ## Build from source
 
@@ -41,11 +41,19 @@ Before compiling the firmware, host tests can explicitly skip compiled-image che
 | Official U8g2 / ArduinoJson | 2.36.18 / 7.4.3 |
 | Python esptool / pyserial / zeroconf | 5.3.1 / 3.5 / 0.148.0 |
 
-It also verifies the unchanged official ESP-SR model bundle. Public speech preparation uses **117 ordered clips** in native `en-us`, including the ten observed-status phrases introduced in v28 and **Demonstration data**. Eighteen unused legacy phrases were retired in v28; production number, weekday and required helper clips remain. V29 and v30 change no phrase definitions or recordings. The generator creates matching PCM source and a hash manifest. Retirement changed enum positions, so regenerate speech and rebuild the matching source together rather than reusing a pre-v28 generated file. Speech is finite, prerecorded phrase-and-number composition; eSpeak does not run on the board and this is not arbitrary text-to-speech. Phrase definitions are in [assets/speech/phrases.json](assets/speech/phrases.json).
+It also verifies the unchanged official ESP-SR model bundle. Public speech preparation uses **117 ordered clips** in native `en-us`, including the ten observed-status phrases introduced in v28 and **Demonstration data**. Eighteen unused legacy phrases were retired in v28; production number, weekday and required helper clips remain. V29 through v31 change no phrase definitions or recordings. The generator creates matching PCM source and a hash manifest. Retirement changed enum positions, so regenerate speech and rebuild the matching source together rather than reusing a pre-v28 generated file. Speech is finite, prerecorded phrase-and-number composition; eSpeak does not run on the board and this is not arbitrary text-to-speech. Phrase definitions are in [assets/speech/phrases.json](assets/speech/phrases.json).
 
 The build uses the included custom partition table, hardware USB CDC, QIO flash and OPI PSRAM. Generated speech, model data, SDK caches, build logs, host reports and firmware images are ignored build artifacts. `build/firmware/build-manifest.json` records the public build; `build/host/host-verification.json` records host checks.
 
 The [October 8 verification record](docs/VERIFICATION.md), [v26 arrival record](docs/VERIFICATION_2026_10_09.md), [v27 indoor-correction record](docs/VERIFICATION_INDOOR_2026_10_09.md), [v28 observed-status record](docs/VERIFICATION_OBSERVED_2026_10_09.md) and [v29 recovery record](docs/VERIFICATION_AUDIO_RECOVERY_2026_10_09.md) retain their historical build, host and installed-device scopes. Public-voice hardware validation remains separate.
+
+### V31 verification, 9 October 2026
+
+The public build compiled without warnings, with all **38** compiled C++/header files matching the final source. All **five final-image validation checks** and the no-port flash dry run passed. The 117-clip speech bank, phrase definitions and upstream model bundle are unchanged. Broader host/audio tests were not repeated for this footer-only change; the v30 results below remain historical evidence.
+
+The separately installed David-audio v31 passed **23 focused checks** in **5.969 seconds**. Normal and reading framebuffers for all three pages were inspected while one overview readout stayed active through page navigation: **[KEY] Stop Reading** remained left, Wi-Fi centered and **[BOOT] Next Page** right, with no **Voice: reading** indicator. USB `KEY`, which uses the physical-button handler, stopped the partial stream without an error; the quiet tail and microphone capture resumed, the normal **[KEY] Read Info** footer returned and overview was restored. No new full-stream, physical-button or human-listening test is claimed.
+
+Public application: **7,413,136 bytes**, SHA-256 `8b98ec526626ca62fc96ac06633bfc5a68ea62cc798827dec3004c6372ed430a`. The public eSpeak image remains unflashed; compiled images and private verification payloads are excluded.
 
 ### V30 verification, 9 October 2026
 
@@ -94,7 +102,7 @@ For your own server, follow [docs/API.md](docs/API.md). DHCP changes are handled
 
 ## Buttons, voice and audio
 
-Release **KEY** to read the selected page; release it again during playback to stop reading. Release **BOOT** for the next page. While reading, the footer shows **Voice: reading** on the left, **WiFi: RSSI** in the center and **[KEY] Stop Reading** on the right. The newline-terminated USB command `KEY` uses the same start/stop action as the physical button. Voice recognition runs locally with MultiNet 7 English and VADNet, **without a wake phrase**, using the same **0.80** detector/action threshold.
+Release **KEY** to read the selected page; release it again during playback to stop reading. Release **BOOT** for the next page. While reading, the footer shows **[KEY] Stop Reading** on the left, **WiFi: RSSI** in the center and **[BOOT] Next Page** on the right, with no **Voice: reading** indicator. The newline-terminated USB command `KEY` uses the same start/stop action as the physical button. Voice recognition runs locally with MultiNet 7 English and VADNet, **without a wake phrase**, using the same **0.80** detector/action threshold.
 
 | Say | Action |
 | --- | --- |

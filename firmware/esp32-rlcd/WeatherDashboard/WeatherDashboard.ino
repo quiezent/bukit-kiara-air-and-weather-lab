@@ -181,7 +181,7 @@ static String statusJson() {
   const bool connected = WiFi.status() == WL_CONNECTED;
   const uint32_t batteryAdcMv = readBatteryAdcMillivolts();
   batteryVoltage = batteryAdcMv * 3.0f / 1000.0f;
-  String out = "{\"firmware\":\"weather-dashboard-30-public.1\",\"connected\":";
+  String out = "{\"firmware\":\"weather-dashboard-31-public.1\",\"connected\":";
   out += connected ? "true" : "false";
   out += ",\"ssid\":" + jsonString(ssid);
   out += ",\"ip\":" + jsonString(connected ? WiFi.localIP().toString() : "");
@@ -616,7 +616,7 @@ void setup() {
   Serial.println("{\"event\":\"voice_startup\",\"ready\":" + String(voiceReady ? "true" : "false")
       + ",\"error\":" + (voiceReady ? String("null") : jsonString(voiceControl.status().error)) + "}");
   weatherClient.begin();
-  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-30-public.1\"}");
+  Serial.println("{\"event\":\"ready\",\"firmware\":\"weather-dashboard-31-public.1\"}");
   String storedSsid = settings.getString("ssid", "");
   if (storedSsid.length()) beginWifi(storedSsid, settings.getString("password", ""), false);
   drawSetupScreen();
