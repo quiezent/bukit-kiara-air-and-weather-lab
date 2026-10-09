@@ -2,6 +2,7 @@
 #include "BatteryEstimate.h"
 #include "ForecastSemantics.h"
 #include "ArrivalChange.h"
+#include "ObservedStatus.h"
 
 namespace {
 constexpr uint32_t kValidEpoch = 1700000000;
@@ -147,13 +148,22 @@ bool overview(Readout &out, const DashboardContext &context, uint32_t now) {
   const JsonVariantConst forecast = (*context.weather)["forecast"];
   const JsonVariantConst near = forecast["near90"];
   const bool currentOk = dashboardCurrentAvailable(context);
-  const bool currentOld = !current["fresh"].as<bool>() || age(now, current["observed_epoch"]) > 420;
+  const bool currentOld = !current["fresh"].is<bool>() || !current["fresh"].as<bool>()
+      || age(now, current["observed_epoch"]) > 420;
   const bool weatherOk = weatherAvailable(now, weather);
   if (currentOk && currentOld && !out.announcement(SpeechClip::CurrentDataOld, "Outdoor data is old")) return false;
   if (!out.labelledSentence(SpeechClip::CurrentPM25, "Current outdoor PM2.5", number(current["pm25_ugm3"]),
-      1, 0, 9999.9f, currentOk)
-      || !out.measurement(SpeechClip::OutdoorTemperature, "Outdoor temperature", number(current["temperature_c"]),
-          SpeechClip::DegreesCelsius, "degrees Celsius", 1, -100, 100, currentOk)) return false;
+      1, 0, 9999.9f, currentOk)) return false;
+  // Match the screen's source-clock and concentration eligibility. The finite
+  // phrase captures both words and clip IDs now, before the playback task starts.
+  if (currentOk && current["observed_epoch"].is<uint32_t>()
+      && forecastPmNumberValid(current["pm25_ugm3"])) {
+    const ObservedStatusPhrase status = observedStatusPhrase(current["display_text"]);
+    if (status.observed && !out.phrase(SpeechClip::Observed, "Observed:")) return false;
+    if (!out.announcement(status.clip, status.words)) return false;
+  }
+  if (!out.measurement(SpeechClip::OutdoorTemperature, "Outdoor temperature", number(current["temperature_c"]),
+      SpeechClip::DegreesCelsius, "degrees Celsius", 1, -100, 100, currentOk)) return false;
   if (weatherOk && weatherOld(now, weather)
       && !out.announcement(SpeechClip::ForecastOld, "Weather forecast is old")) return false;
   const JsonVariantConst hour = rainHour(weather, now);

@@ -4,9 +4,9 @@
 #include <cmath>
 #include <limits>
 
-// Initial correction for this unit's desk position outside the direct airflow.
+// User-selected starting correction for desk use outside the direct airflow.
 // This is an adjustable temperature offset, not a sensor factory calibration.
-constexpr float kIndoorDefaultTemperatureOffsetC = -4.8f;
+constexpr float kIndoorDefaultTemperatureOffsetC = -4.0f;
 
 struct IndoorCompensationResult {
   bool valid = false;

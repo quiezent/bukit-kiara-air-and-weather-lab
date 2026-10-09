@@ -44,7 +44,7 @@ void invalid(double temperature, double humidity, double offset) {
 }
 
 void offsetAndInputLimits() {
-  assert(close(kIndoorDefaultTemperatureOffsetC, -4.8, 1e-6)); ++checks;
+  assert(close(kIndoorDefaultTemperatureOffsetC, -4.0, 1e-6)); ++checks;
   for (double offset : {-10.0, -4.8, -0.0, 0.0, 4.8, 10.0}) {
     assert(indoorOffsetValid(offset)); ++checks;
   }
@@ -85,14 +85,14 @@ void identityAndPhotoReadings() {
   }
   const auto desk = indoorCompensate(30.8, 58.4, -4.8);
   assert(desk.valid && close(desk.temperatureC, 26.0));
-  // The earlier handheld comparison was 26C/75%; its temperature difference
-  // supplies a starting offset selected for desk use. RH is compensated from
-  // the raw reading, not independently forced to the comparator's percentage.
+  // Retain the historical -4.8C scenario from the earlier handheld comparison
+  // with a 26C/75% reference. RH is compensated from the raw reading, not
+  // independently forced to the comparator's percentage.
   assert(desk.humidityPct > 77 && desk.humidityPct < 78);
   assert(!desk.humidityClamped && !close(desk.humidityPct, 75)); ++checks;
   const auto defaults = indoorCompensate(30.8f, 58.4f, kIndoorDefaultTemperatureOffsetC);
-  assert(defaults.valid && close(defaults.temperatureC, 26.0, 2e-6));
-  assert(close(defaults.humidityPct, desk.humidityPct, 1e-5)); ++checks;
+  assert(defaults.valid && close(defaults.temperatureC, 26.8, 2e-6));
+  assert(close(defaults.humidityPct, 73.62631976649399, 1e-5)); ++checks;
   // The later 30.2C vs28C airflow comparison has a different local offset.
   // Applying the desk offset still yields25.4C; this helper never invents an
   // airflow-specific adjustment or overwrites a caller-selected offset.

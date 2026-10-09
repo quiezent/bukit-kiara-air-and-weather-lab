@@ -187,18 +187,6 @@
       "text": "Weather forecast is old"
     },
     {
-      "id": "OverviewPage",
-      "text": "Weather overview"
-    },
-    {
-      "id": "RidePage",
-      "text": "Mountain bike ride forecast"
-    },
-    {
-      "id": "HistoryPage",
-      "text": "Outdoor history"
-    },
-    {
       "id": "IndoorTemperature",
       "text": "Indoor temperature"
     },
@@ -259,28 +247,8 @@
       "text": "Saturday"
     },
     {
-      "id": "Near90",
-      "text": "Mountain bike, plus ninety minutes"
-    },
-    {
       "id": "PMForecast",
       "text": "P M two point five forecast"
-    },
-    {
-      "id": "FirstRise",
-      "text": "First rise of at least twenty predicted"
-    },
-    {
-      "id": "FirstDrop",
-      "text": "First drop of at least twenty predicted"
-    },
-    {
-      "id": "NoDirectional",
-      "text": "No directional call"
-    },
-    {
-      "id": "TennisMorning",
-      "text": "Tennis morning"
     },
     {
       "id": "Window",
@@ -301,18 +269,6 @@
     {
       "id": "Gust",
       "text": "Gust"
-    },
-    {
-      "id": "RideWindow",
-      "text": "Ride window, plus ninety to plus two hundred and ten minutes"
-    },
-    {
-      "id": "PMRange",
-      "text": "P M two point five range"
-    },
-    {
-      "id": "ChanceBelow70",
-      "text": "Chance the ride window average is seventy or less"
     },
     {
       "id": "Morning",
@@ -371,14 +327,6 @@
       "text": "Approximate battery charge"
     },
     {
-      "id": "IndoorTemperatureRange",
-      "text": "Indoor temperature range since restart"
-    },
-    {
-      "id": "IndoorHumidityRange",
-      "text": "Indoor humidity range since restart"
-    },
-    {
       "id": "UnavailableValue",
       "text": "unavailable"
     },
@@ -387,16 +335,8 @@
       "text": "Data is old"
     },
     {
-      "id": "ForecastIssued",
-      "text": "Forecast issued"
-    },
-    {
       "id": "Observed",
       "text": "Observed"
-    },
-    {
-      "id": "FirstChange",
-      "text": "First change prediction"
     },
     {
       "id": "Near90Forecast",
@@ -471,18 +411,6 @@
       "text": "Warning, ride window rain chance"
     },
     {
-      "id": "FirstRiseMostLikely",
-      "text": "Rise of twenty or more is most likely"
-    },
-    {
-      "id": "FirstDropMostLikely",
-      "text": "Drop of twenty or more is most likely"
-    },
-    {
-      "id": "No20ChangeMostLikely",
-      "text": "No change of twenty or more is most likely"
-    },
-    {
       "id": "NoChangeOnArrival",
       "text": "No change on arrival"
     },
@@ -497,6 +425,46 @@
     {
       "id": "ArrivalOutcomeUncertain",
       "text": "Arrival outcome uncertain"
+    },
+    {
+      "id": "ObservedFastRise",
+      "text": "Fast P M two point five rise detected"
+    },
+    {
+      "id": "ObservedFastRebound",
+      "text": "Fast P M two point five rebound detected"
+    },
+    {
+      "id": "ObservedReboundStarting",
+      "text": "Particle rebound may be starting"
+    },
+    {
+      "id": "ObservedRecentMedians35",
+      "text": "Recent P M two point five medians at or below thirty five micrograms per cubic metre"
+    },
+    {
+      "id": "ObservedMoistCoolingClearing",
+      "text": "Moist cooling particle clearing forming"
+    },
+    {
+      "id": "ObservedDryClearing",
+      "text": "Dry clearing forming"
+    },
+    {
+      "id": "ObservedReductionForming",
+      "text": "P M two point five reduction forming"
+    },
+    {
+      "id": "ObservedRapidReduction",
+      "text": "Rapid P M two point five reduction detected"
+    },
+    {
+      "id": "LatestSensorReading",
+      "text": "Latest sensor reading"
+    },
+    {
+      "id": "ObservedStatusUnavailable",
+      "text": "Observed status unavailable"
     },
     {
       "id": "DemoData",

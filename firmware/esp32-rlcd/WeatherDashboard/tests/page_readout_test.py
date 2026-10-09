@@ -108,10 +108,11 @@ static void build(DashboardContext &context, SpeechPlaylist &clips, String &text
   assert(!text.str().empty() && text.str().back() == '.');
   for (size_t i = 0; i < clips.count; ++i) assert(clips.clips[i] < C::Count);
   assert(!count(clips, C::Micrograms));
-  // Crossing events are retained for diagnostics, never spoken as arrivals.
-  for (C legacy : {C::FirstRiseMostLikely, C::FirstDropMostLikely,
-                   C::No20ChangeMostLikely, C::FirstRise, C::FirstDrop})
-    assert(!count(clips, legacy));
+  // Crossing events remain diagnostic data. Retired recordings are absent
+  // from the enum, and their obsolete meaning must never enter narration.
+  for (const char *legacy : {"First rise", "First drop", "Rise of twenty or more",
+                            "Drop of twenty or more", "No change of twenty or more"})
+    lacks(text, legacy);
 }
 static void sessionFixture(JsonVariant session, uint32_t start, float pm, float rain = 12) {
   session["issued_epoch"] = now;
@@ -132,6 +133,7 @@ static void fixture(JsonDocument &d) {
   current["available"] = true; current["fresh"] = true;
   current["observed_epoch"] = now - 60;
   current["pm25_ugm3"] = 162.2; current["temperature_c"] = 27.6;
+  current["display_text"] = "Latest sensor reading";
   auto weather = d["weather"];
   weather["available"] = true; weather["fresh"] = true; weather["fetched_epoch"] = now;
   // current_hour's rain covers the PREVIOUS hour. It must not be spoken as now.
@@ -198,7 +200,7 @@ struct Test {
 static void routingAndSnapshot() {
   Test t;
   t.page(0);
-  assert(t.text.str() == "Current outdoor PM2.5 162.2. Outdoor temperature 27.6 degrees Celsius. Rain chance 1 percent. Ninety minute forecast PM2.5 888.8. No change on arrival, 78.8 percent. Rain chance in an hour 2 percent.");
+  assert(t.text.str() == "Current outdoor PM2.5 162.2. Latest sensor reading. Outdoor temperature 27.6 degrees Celsius. Rain chance 1 percent. Ninety minute forecast PM2.5 888.8. No change on arrival, 78.8 percent. Rain chance in an hour 2 percent.");
   lacks(t.text, "Indoor"); lacks(t.text, "126.4");
   sequence(t.clips, {C::NoChangeOnArrival, C::N70, C::N8, C::Point, C::N8, C::Percent, C::RainInAnHour});
   t.page(1);
@@ -277,6 +279,145 @@ static void rainIntervalsAndValues() {
   t.d["current"]["fresh"] = false; t.page(0); assert(count(t.clips, C::CurrentDataOld) == 1);
   t.d["current"]["observed_epoch"] = now - 901; t.page(0);
   assert(!count(t.clips, C::CurrentDataOld)); contains(t.text, "Current outdoor PM2.5 unavailable.");
+}
+static void observedStatusReadout() {
+  struct Expected { const char *body; C clip; };
+  const Expected labels[] = {
+    {"Fast PM2.5 rise detected", C::ObservedFastRise},
+    {"Fast PM2.5 rebound detected", C::ObservedFastRebound},
+    {"Particle rebound may be starting", C::ObservedReboundStarting},
+    {"Recent PM2.5 medians at or below 35 µg/m³", C::ObservedRecentMedians35},
+    {"Moist-cooling particle clearing forming", C::ObservedMoistCoolingClearing},
+    {"Dry clearing forming", C::ObservedDryClearing},
+    {"PM2.5 reduction forming", C::ObservedReductionForming},
+    {"Rapid PM2.5 reduction detected", C::ObservedRapidReduction},
+  };
+  Test t;
+  const auto statusCount = [&]() {
+    size_t result = count(t.clips, C::Observed) + count(t.clips, C::LatestSensorReading)
+        + count(t.clips, C::ObservedStatusUnavailable);
+    for (const Expected &label : labels) result += count(t.clips, label.clip);
+    return result;
+  };
+  float longest = 0;
+  size_t longestCount = 0;
+  float longestComplex = 0;
+  size_t longestComplexCount = 0;
+  for (const Expected &label : labels) {
+    t.reset();
+    const std::string source = std::string("Observed: ") + label.body;
+    t.d["current"]["display_text"] = source;
+    t.page(0);
+    const std::string expected = std::string("Current outdoor PM2.5 162.2. ")
+        + source + ". Outdoor temperature 27.6 degrees Celsius.";
+    contains(t.text, expected.c_str());
+    assert(count(t.clips, C::Observed) == 1 && count(t.clips, label.clip) == 1 && statusCount() == 2);
+    sequence(t.clips, {C::CurrentPM25, C::N1, C::Hundred, C::N60, C::N2,
+        C::Point, C::N2, C::Observed, label.clip, C::OutdoorTemperature});
+    contains(t.text, "No change on arrival, 78.8 percent.");
+    assert(duration(t.clips) < 60 && t.clips.count < SpeechPlaylist::kCapacity);
+    if (duration(t.clips) > longest) { longest = duration(t.clips); longestCount = t.clips.count; }
+    t.d["current"]["pm25_ugm3"] = 9999.9;
+    t.d["current"]["temperature_c"] = -99.9;
+    t.d["current"]["fresh"] = false;
+    t.d["weather"]["fresh"] = false;
+    t.d["forecast"]["fresh"] = false;
+    t.d["forecast"]["near90"]["pm25_ugm3"] = 9999.9;
+    t.page(0);
+    assert(statusCount() == 2 && count(t.clips, C::CurrentDataOld) == 1);
+    assert(duration(t.clips) < 60 && t.clips.count < SpeechPlaylist::kCapacity);
+    if (duration(t.clips) > longestComplex) {
+      longestComplex = duration(t.clips); longestComplexCount = t.clips.count;
+    }
+    for (unsigned page : {1u, 2u}) {
+      t.page(page); assert(statusCount() == 0); lacks(t.text, source.c_str());
+    }
+  }
+  printf("Longest observed Page 1: %.2fs, %zu/%zu clip IDs\n", longest, longestCount, SpeechPlaylist::kCapacity);
+  printf("Longest complex observed Page 1: %.2fs, %zu/%zu clip IDs\n",
+      longestComplex, longestComplexCount, SpeechPlaylist::kCapacity);
+  // The API-backed text and clip IDs are captured together before later refreshes.
+  t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
+  t.page(0); const SpeechPlaylist captured = t.clips; const std::string text = t.text.str();
+  t.d["current"]["display_text"] = "Observed: Rapid PM2.5 reduction detected";
+  t.d["current"]["pm25_ugm3"] = 42; t.d.clear();
+  assert(t.text.str() == text && t.clips.count == captured.count);
+  for (size_t i = 0; i < captured.count; ++i) assert(t.clips.clips[i] == captured.clips[i]);
+  t.reset(); t.page(0);
+  contains(t.text, "Current outdoor PM2.5 162.2. Latest sensor reading. Outdoor temperature");
+  sequence(t.clips, {C::Point, C::N2, C::LatestSensorReading, C::OutdoorTemperature});
+  assert(statusCount() == 1 && !count(t.clips, C::Observed));
+  // Exact matching avoids speaking a known fragment while logging unsupported text.
+  for (const char *unknown : {"", "Observed: New server status", "Particle rebound may be starting",
+      "Observed: Particle rebound may be starting extra", "Observed: Particle rebound may be starting ",
+      "observed: Particle rebound may be starting", " Latest sensor reading"}) {
+    t.reset(); t.d["current"]["display_text"] = unknown; t.page(0);
+    contains(t.text, "Current outdoor PM2.5 162.2. Observed status unavailable. Outdoor temperature");
+    assert(statusCount() == 1 && count(t.clips, C::ObservedStatusUnavailable) == 1);
+    sequence(t.clips, {C::Point, C::N2, C::ObservedStatusUnavailable, C::OutdoorTemperature});
+    if (unknown[0]) lacks(t.text, unknown);
+  }
+  for (unsigned malformed = 0; malformed < 7; ++malformed) {
+    t.reset();
+    if (malformed == 0) t.d["current"].remove("display_text");
+    if (malformed == 1) t.d["current"]["display_text"] = nullptr;
+    if (malformed == 2) t.d["current"]["display_text"] = true;
+    if (malformed == 3) t.d["current"]["display_text"] = 42;
+    if (malformed == 4) t.d["current"]["display_text"] = 1.5;
+    if (malformed == 5) t.d["current"]["display_text"].to<JsonObject>()["text"] = "Latest sensor reading";
+    if (malformed == 6) t.d["current"]["display_text"].to<JsonArray>().add("Latest sensor reading");
+    t.page(0); assert(statusCount() == 1 && count(t.clips, C::ObservedStatusUnavailable) == 1);
+  }
+  for (uint32_t sourceAge : {uint32_t(0), uint32_t(420), uint32_t(421), uint32_t(900), uint32_t(901)}) {
+    t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
+    t.d["current"]["observed_epoch"] = now - sourceAge;
+    t.page(0);
+    assert(statusCount() == (sourceAge <= 900 ? 2 : 0));
+    assert(count(t.clips, C::CurrentDataOld) == (sourceAge > 420 && sourceAge <= 900 ? 1 : 0));
+    if (sourceAge > 420 && sourceAge <= 900)
+      contains(t.text, "Outdoor data is old. Current outdoor PM2.5 162.2. Observed: Particle rebound may be starting.");
+  }
+  // Missing/nonboolean freshness is old, matching the screen. It does not erase
+  // a still-available cached observation or duplicate the old-current warning.
+  for (unsigned freshState = 0; freshState < 5; ++freshState) {
+    t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
+    if (freshState == 0) t.d["current"]["fresh"] = false;
+    if (freshState == 1) t.d["current"].remove("fresh");
+    if (freshState == 2) t.d["current"]["fresh"] = nullptr;
+    if (freshState == 3) t.d["current"]["fresh"] = 1;
+    if (freshState == 4) t.d["current"]["fresh"] = "true";
+    t.page(0); assert(statusCount() == 2 && count(t.clips, C::CurrentDataOld) == 1);
+  }
+  // The status never bypasses clock typing, source expiry or numerical validity.
+  for (unsigned invalid = 0; invalid < 12; ++invalid) {
+    t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
+    if (invalid == 0) t.d["current"]["available"] = false;
+    if (invalid == 1) t.d["current"].remove("observed_epoch");
+    if (invalid == 2) t.d["current"]["observed_epoch"] = nullptr;
+    if (invalid == 3) t.d["current"]["observed_epoch"] = now + 1;
+    if (invalid == 4) t.d["current"]["observed_epoch"] = 0;
+    if (invalid == 5) t.d["current"]["observed_epoch"] = std::to_string(now - 60);
+    if (invalid == 6) t.d["current"]["observed_epoch"] = -1;
+    if (invalid == 7) t.d["current"]["observed_epoch"] = true;
+    if (invalid == 8) t.d["current"]["observed_epoch"] = 1791428340.5;
+    if (invalid == 9) t.d["current"]["observed_epoch"] = uint64_t(UINT32_MAX) + 1;
+    if (invalid == 10) t.d["current"]["pm25_ugm3"] = "162.2";
+    if (invalid == 11) t.d["current"]["pm25_ugm3"] = true;
+    t.page(0); assert(statusCount() == 0); lacks(t.text, "Particle rebound");
+  }
+  for (float invalid : {-1.0f, 10000.0f, float(NAN), float(INFINITY), float(-INFINITY)}) {
+    t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
+    t.d["current"]["pm25_ugm3"] = invalid; t.page(0); assert(statusCount() == 0);
+  }
+  t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
+  t.d["current"]["pm25_ugm3"] = nullptr; t.page(0); assert(statusCount() == 0);
+  for (float endpoint : {0.0f, 9999.9f}) {
+    t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
+    t.d["current"]["pm25_ugm3"] = endpoint; t.page(0); assert(statusCount() == 2);
+  }
+  t.reset(); t.d["current"]["display_text"] = "Observed: Particle rebound may be starting";
+  t.d["weather"]["available"] = false; t.d["forecast"]["available"] = false;
+  t.page(0); assert(statusCount() == 2); // Forecast availability does not gate observations.
 }
 static void first20Semantics() {
   Test t; JsonObject event = t.d["forecast"]["near90"]["first20"].as<JsonObject>();
@@ -675,9 +816,9 @@ static void arrivalProbabilityReadout() {
   }
 }
 int main() {
-  routingAndSnapshot(); demoReadoutDisclosure(); rainIntervalsAndValues(); first20Semantics();
+  routingAndSnapshot(); demoReadoutDisclosure(); rainIntervalsAndValues(); observedStatusReadout(); first20Semantics();
   sessionComparisonAndWarnings(); rangeHistoryIndoorBattery(); capacityDurationAndReset(); modernForecastSemantics(); arrivalProbabilityReadout();
-  puts("PASS: demo provenance, native arrival transcript/audio, nullable point reference independence, legacy crossing decoder, exact ties, rounding, malformed/stale/expired suppression, modern min/max, coverage and existing narration safeguards");
+  puts("PASS: strict demo provenance, nullable point reference independence, exact observed status transcript/audio, freshness/expiry/type guards and snapshot; native arrival winner probability, independent legacy crossing decoder, ties, rounding, malformed/stale/expired suppression, modern min/max and coverage");
 }
 """
 
@@ -697,6 +838,19 @@ int main() {
   for (unsigned page = 0; page < 3; ++page) {
     context.page = page;
     clips.count = SpeechPlaylist::kCapacity;
+    text = "previous transcript";
+    assert(!buildCurrentPageReadout(context, clips, text));
+    assert(clips.count == 0 && text.str().empty());
+  }
+  // A valid 0.0 PM2.5 uses all four slots. The subsequent status must fail
+  // transactionally instead of retaining the preceding value or old text.
+  context.page = 0;
+  document["current"]["available"] = true;
+  document["current"]["fresh"] = true;
+  document["current"]["observed_epoch"] = uint32_t(1800000000);
+  document["current"]["pm25_ugm3"] = 0;
+  for (const char *status : {"Latest sensor reading", "Observed: Particle rebound may be starting", "unknown"}) {
+    document["current"]["display_text"] = status;
     text = "previous transcript";
     assert(!buildCurrentPageReadout(context, clips, text));
     assert(clips.count == 0 && text.str().empty());
@@ -765,6 +919,24 @@ def main():
     ids = re.findall(r"^\s+(\w+),", enum.split("Count", 1)[0], re.MULTILINE)
     clips = {clip["id"]: clip for clip in manifest["clips"]}
     assert len(ids) == manifest["clip_count"] and all(identifier in clips for identifier in ids)
+    # Audio's finite status wording must describe the same observation as the
+    # transcript, including the confirmed median threshold and concentration unit.
+    status_phrases = {
+        "Observed": "Observed",
+        "ObservedFastRise": "Fast P M two point five rise detected",
+        "ObservedFastRebound": "Fast P M two point five rebound detected",
+        "ObservedReboundStarting": "Particle rebound may be starting",
+        "ObservedRecentMedians35": "Recent P M two point five medians at or below thirty five micrograms per cubic metre",
+        "ObservedMoistCoolingClearing": "Moist cooling particle clearing forming",
+        "ObservedDryClearing": "Dry clearing forming",
+        "ObservedReductionForming": "P M two point five reduction forming",
+        "ObservedRapidReduction": "Rapid P M two point five reduction detected",
+        "LatestSensorReading": "Latest sensor reading",
+        "ObservedStatusUnavailable": "Observed status unavailable",
+    }
+    for identifier, phrase in status_phrases.items():
+        assert clips[identifier]["phrase"] == phrase, (identifier, clips[identifier]["phrase"], phrase)
+        assert clips[identifier]["sample_count"] > 0
     sample_counts = ", ".join(str(clips[identifier]["sample_count"]) for identifier in ids)
     test_source.write_text(HARNESS.replace("@@CLIP_SAMPLES@@", sample_counts), encoding="utf-8")
     suffix = ".exe" if sys.platform == "win32" else ""

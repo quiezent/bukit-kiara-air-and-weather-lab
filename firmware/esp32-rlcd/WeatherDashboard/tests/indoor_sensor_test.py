@@ -185,10 +185,10 @@ static void centralValuesCadenceAndTransport() {
         "driver owns the configured shared I2C bus");
   check(first.valid && first.samples == 1 && first.errors == 0 && first.sensorId == 0xBEEF,
         "valid ID and first observation pass actual CRC processing");
-  check(close(sensor.temperatureOffset(), -4.8), "default board-heat correction");
+  check(close(sensor.temperatureOffset(), -4.0), "default board-heat correction");
   check(close(first.rawTemperatureC, 32.0004272461) && close(first.rawHumidityPct, 55.0003051758),
         "manufacturer raw conversion retained");
-  check(close(first.temperatureC, 27.2004272461) && close(first.humidityPct, 72.5111353726),
+  check(close(first.temperatureC, 28.0004272461) && close(first.humidityPct, 69.1995121994),
         "central corrected temperature and compensated humidity");
   check(!first.humidityClamped, "ordinary compensated humidity is not clamped");
   rangesAtCurrent(first);
@@ -206,8 +206,8 @@ static void centralValuesCadenceAndTransport() {
   Wire.frames.push_back(frame34); clockUs = uint64_t(attempted + 10000) * 1000; sensor.update();
   const auto &second = sensor.reading();
   check(second.samples == 2 && Wire.measurementReads == reads + 1, "measurement resumes at exact ten-second boundary");
-  check(close(second.minimumC, 27.2004272461) && close(second.maximumC, 29.2004730225)
-        && close(second.minimumHumidity, 65.6551142013) && close(second.maximumHumidity, 72.5111353726),
+  check(close(second.minimumC, 28.0004272461) && close(second.maximumC, 30.0004730225)
+        && close(second.minimumHumidity, 62.6994125982) && close(second.maximumHumidity, 69.1995121994),
         "ranges track corrected observations rather than raw values");
 }
 

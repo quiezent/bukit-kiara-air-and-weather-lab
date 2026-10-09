@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Generate the public dashboard's 125 local speech clips with eSpeak NG 1.52.0.
+"""Generate the public dashboard's 117 local speech clips with eSpeak NG 1.52.0.
 
 Requires Python 3.10+ and an independently installed native eSpeak NG executable.
 No Microsoft voice recordings, previous cache, cloud service or audio playback
@@ -46,8 +46,8 @@ def digest(path: Path) -> str:
 def read_phrases(path: Path) -> list[dict[str, str]]:
     document = json.loads(path.read_text(encoding="utf-8"))
     phrases = document["phrases"]
-    if not isinstance(phrases, list) or len(phrases) != 125:
-        raise ValueError("phrases.json must contain all 125 ordered public dashboard clips")
+    if not isinstance(phrases, list) or len(phrases) != 117:
+        raise ValueError("phrases.json must contain all 117 ordered public dashboard clips")
     names = []
     for phrase in phrases:
         if not isinstance(phrase, dict) or not isinstance(phrase.get("id"), str):
@@ -289,7 +289,7 @@ def generate(engine: Path, environment: dict[str, str], phrases_path: Path,
         "source_header": "WeatherDashboard/SpeechClips.h",
         "source_header_sha256": digest(PACKAGE / "WeatherDashboard" / "SpeechClips.h"),
         "clips": clips,
-        "validation": {"all_125_phrase_ids_match_header_order": True,
+        "validation": {"all_117_phrase_ids_match_header_order": True,
                        "no_silent_clips": True, "no_clipped_samples": True,
                        "all_processed_clips_16khz_16bit_mono": True},
     }

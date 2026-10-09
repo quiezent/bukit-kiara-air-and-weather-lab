@@ -1,6 +1,6 @@
 # LAN data contract for the ESP32 dashboard
 
-The **27-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with additive native arrival-change and current-status fields. Its public build and host checks passed; its eSpeak NG voice is unflashed. The [v27 verification record](VERIFICATION_INDOOR_2026_10_09.md) separates those results from installed-device checks, while the [v26 record](VERIFICATION_2026_10_09.md) remains historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
+The **28-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with additive native arrival-change and current-status fields. Its public build and host checks passed, and its eSpeak NG voice remains unflashed. The [v28 verification record](VERIFICATION_OBSERVED_2026_10_09.md) separates current public-source results from installed-device checks; the [v27 indoor record](VERIFICATION_INDOOR_2026_10_09.md) and [v26 arrival record](VERIFICATION_2026_10_09.md) remain historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
 
 ## Discovery and transport
 
@@ -45,6 +45,27 @@ The concentration estimate, original reference, within-window extrema, first-cro
 Primary PM values require `available: true`, a finite nonnegative `pm25_ugm3` within the display range, and role `raw_model_output`, `experimental_model_output` or legacy `experimental_window_mean`. The device never substitutes `reference_pm25_ugm3` for a missing primary model value. Qualification/calibration metadata stays distinct from numerical output; an eligible raw estimate is not treated as an operational recommendation.
 
 `current.display_text` is the server's nonempty dynamic status for the current sensor concentration. The screen preserves it, with an old-data prefix when appropriate. Missing status text is not replaced by a fabricated classification, and invalid/expired current data stays unavailable. This text is independent of the arrival headline.
+
+### Observed-status speech
+
+Page 1 captures `current.display_text` when building its readout snapshot. It speaks the corresponding recorded status immediately **after current outdoor PM2.5 and before outdoor temperature**. Exact case, punctuation and UTF-8 spelling select this finite bank:
+
+| Exact API `current.display_text` | Spoken words |
+| --- | --- |
+| `Observed: Fast PM2.5 rise detected` | Observed: Fast PM2.5 rise detected |
+| `Observed: Fast PM2.5 rebound detected` | Observed: Fast PM2.5 rebound detected |
+| `Observed: Particle rebound may be starting` | Observed: Particle rebound may be starting |
+| `Observed: Recent PM2.5 medians at or below 35 µg/m³` | Observed: Recent PM2.5 medians at or below thirty five micrograms per cubic metre |
+| `Observed: Moist-cooling particle clearing forming` | Observed: Moist cooling particle clearing forming |
+| `Observed: Dry clearing forming` | Observed: Dry clearing forming |
+| `Observed: PM2.5 reduction forming` | Observed: PM2.5 reduction forming |
+| `Observed: Rapid PM2.5 reduction detected` | Observed: Rapid PM2.5 reduction detected |
+| `Latest sensor reading` | Latest sensor reading |
+| Unknown, missing, null, empty or nonstring text with otherwise eligible current data | Observed status unavailable |
+
+PM2.5 is pronounced **P M two point five**. The eight observed mappings reuse the recorded **Observed** prefix and a matching fixed body; the neutral and unavailable phrases stand alone. There is no runtime arbitrary-text synthesis or derived movement classification. Changing API wording without adding a matching clip causes the unavailable fallback rather than a transcript without corresponding audio.
+
+The status requires the same eligible current observation/concentration as the display, including a valid source epoch and PM value. Expired or future observations, unavailable current data and invalid PM suppress it entirely. Eligible old data retains the single **Outdoor data is old** announcement before current PM, without repeating it for the status. The existing seven-minute old / fifteen-minute expiry rules below are unchanged. Text, clip IDs and values are captured together; later server polling cannot change a running narration.
 
 ### Native arrival-change headline and probability
 
@@ -103,16 +124,16 @@ Indoor measurements and battery voltage come from the ESP32 board, not this API.
 This setting belongs to the **ESP32's own HTTP service**, separate from the weather producer's `/api/rlcd/v1`. Send `POST /indoor-correction` to the board with `Content-Type: application/x-www-form-urlencoded` and this form field:
 
 ```text
-temperature_offset_c=-4.8
+temperature_offset_c=-4.0
 ```
 
 For example, replace `BOARD_HOST` with the board's current hostname or LAN address:
 
 ```sh
-curl -X POST "http://BOARD_HOST/indoor-correction" --data "temperature_offset_c=-4.8"
+curl -X POST "http://BOARD_HOST/indoor-correction" --data "temperature_offset_c=-4.0"
 ```
 
-The field must parse completely as a finite number in **[−10,+10] °C**; a JSON body is not accepted by this route. Success returns HTTP **200** with `{"saved":true,"temperature_offset_c":-4.80}`. Missing/invalid fields return **400**; a failed NVS save returns **500** without applying the requested change. Accepted settings persist across restarts. With no saved valid setting, the public default is −4.8 °C. It was selected for normal desk use outside direct airflow from an earlier handheld comparison of raw 30.8 °C with a Dyson reading 26 °C; this was not a controlled desk calibration. The later airflow pair was 30.2 °C/60.2% RH versus 28 °C/72% RH, a different 2.2 °C temperature gap. Select your own offset using a co-located reference under the board's normal operating conditions; the estimate does not replace the SHTC3's factory calibration or establish traceable system calibration.
+The field must parse completely as a finite number in **[−10,+10] °C**; a JSON body is not accepted by this route. Success returns HTTP **200** with `{"saved":true,"temperature_offset_c":-4.00}`. Missing/invalid fields return **400**; a failed NVS save returns **500** without applying the requested change. Accepted settings persist across restarts. Public v28 uses the user-selected **−4.0 °C** fallback when no valid saved setting exists; flashing preserves an existing saved offset. The initial v27 −4.8 °C value and informal comparison evidence remain in the [dated v27 record](VERIFICATION_INDOOR_2026_10_09.md). Select your own offset using a co-located reference under the board's normal operating conditions; this estimate does not replace the SHTC3's factory calibration or establish traceable system calibration.
 
 Let `Traw` and `RHraw` be the manufacturer's converted sensor readings, and `offset` the configured temperature offset. The original firmware helper applies equation 1 of Sensirion's [Design Guide for Humidity and Temperature Sensors](https://sensirion.com/resource/user_guide/sht/design_in/):
 
