@@ -24,4 +24,8 @@ Credit: **Copernicus Atmosphere Monitoring Service (CAMS), its data providers, a
 
 Credit: **Malaysian Meteorological Department (MET Malaysia)**. The code retrieves Subang hourly SYNOP reference observations from its WIS2 service, station WIGOS `0-20000-0-48647`. This is a different location from the TTDI sensor. Observations are used as reference context, not relabelled as a forecast. [MET Malaysia](https://www.met.gov.my/) and [its WIS2 service](http://wis2node.met.gov.my/oapi/collections/urn:wmo:md:my-metmalaysia:synop-hourly/items).
 
+## RainViewer radar
+
+Credit: [Weather data by RainViewer](https://www.rainviewer.com/). The server keeps timestamped summary features from recent *past* radar frames around TTDI for research. It stores no radar images, and radar is not an input to the published PM2.5 forecasts. A composite frame's timestamp is not necessarily its local scan time, and radar echo is not a ground-level rain measurement. RainViewer's [public API terms](https://www.rainviewer.com/api.html) permit personal and educational use and require visible credit; the dashboard shows it in its source details. Availability is best effort.
+
 Provider names, logos and datasets are not owned or relicensed by this project. There is no endorsement by the providers. Before a commercial, redistributed or high-volume deployment, check the actual provider terms and access arrangements; this public source snapshot makes no grant over third-party data.
