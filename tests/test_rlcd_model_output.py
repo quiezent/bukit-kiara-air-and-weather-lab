@@ -1,8 +1,8 @@
 """Device contracts for direct numeric model outputs; synthetic inputs only."""
+
 from pathlib import Path as _PublicPath
 import sys as _public_sys
 _public_sys.path.insert(0, str(_PublicPath(__file__).resolve().parents[1] / "app"))
-
 from copy import deepcopy
 import json
 import unittest
@@ -164,26 +164,18 @@ class DirectModelOutputTests(unittest.TestCase):
             self.assertFalse(actual["used_for_decision"])
             self.assertEqual(actual["role"], "experimental_model_output")
 
-    def test_coach_and_device_preserve_finite_unqualified_model_number_and_metadata(self):
-        # A finite estimator output must not be clipped or replaced at either
-        # publication adapter, even when its performance flags are false.
-        import BukitKiara_Dashboard as dashboard
+    def test_device_preserves_finite_unqualified_model_number(self):
+        # A finite estimator output must not be clipped or replaced at the
+        # device publication adapter, even when its performance flags are false.
         value = {**source(-5.23456789, "fixed_direct_model"),
                  "numericalPolicyIdentifier": "fixed_direct_numeric_policy",
                  "modelOutputPolicy": {"fixedModel": True, "numericalSelectionApplied": False},
                  "performanceEvidence": {"prospectivelyValidated": False, "appliedToNumber": False}}
-        coach = dashboard.compact_window_particle_forecast(value)
         device = rlcd_api.projection(value, True)
-        self.assertEqual(coach["publishedMeanPm25UgM3"], value["point"])
-        self.assertEqual(coach["projectedMeanPm25UgM3"], value["point"])
-        self.assertEqual(coach["planningEstimate"]["meanPm25UgM3"], value["point"])
+        self.assertTrue(device["available"])
         self.assertEqual(device["pm25_ugm3"], value["point"])
-        self.assertTrue(coach["modelPointApplied"])
-        self.assertFalse(coach["usedForDecision"])
-        self.assertFalse(coach["validated"])
-        self.assertEqual(coach["modelOutputPolicy"], value["modelOutputPolicy"])
-        self.assertEqual(coach["performanceEvidence"], value["performanceEvidence"])
-        self.assertEqual(coach["numericalPolicyIdentifier"], value["numericalPolicyIdentifier"])
+        self.assertFalse(device["used_for_decision"])
+        self.assertFalse(device["validated"])
 
     def test_direct_model_payload_keeps_weather_proof_history_summary_and_byte_budget(self):
         result, (_, original, _, rows) = self.project()

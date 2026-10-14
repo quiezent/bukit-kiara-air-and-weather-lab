@@ -2,15 +2,15 @@
 
 No fits, provider requests, production database access or historical writes.
 """
+
 from pathlib import Path as _PublicPath
 import sys as _public_sys
 _public_sys.path.insert(0, str(_PublicPath(__file__).resolve().parents[1] / "app"))
-
 from copy import deepcopy
 import json
 import math
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import compact_forecast_record as ledger
 import rlcd_api
@@ -230,7 +230,7 @@ class ArrivalDistributionProjectionTests(unittest.TestCase):
             self.assertTrue(weather["coverage_verified"])
 
 
-class ArrivalDistributionLedgerAndCoachTests(unittest.TestCase):
+class ArrivalDistributionLedgerTests(unittest.TestCase):
     def test_future_compact_issue_preserves_full_distribution_identity_clock_and_lineage(self):
         analysis = rich_inputs()[1]
         original = encoded(analysis)
@@ -260,28 +260,6 @@ class ArrivalDistributionLedgerAndCoachTests(unittest.TestCase):
         self.assertEqual(encoded(historical), original)
         self.assertEqual(encoded(compact["airWindow"]["firstCrossingEventForecast"]),
                          encoded(historical["airWindow"]["firstCrossingEventForecast"]))
-
-    def test_coach_preserves_entire_native_object_and_both_existing_forecast_targets(self):
-        import BukitKiara_Dashboard as dashboard
-        reading, analysis, _, _ = rich_inputs()
-        original = encoded(analysis)
-        connection = MagicMock()
-        connection.__enter__.return_value.execute.return_value.fetchone.return_value = reading
-        with patch.object(dashboard, "analysis", return_value=analysis), \
-                patch.object(dashboard, "db", return_value=connection), \
-                patch.object(dashboard, "latest_air_quality_payload", return_value=None), \
-                patch.object(dashboard, "coach_api_contract_metadata", return_value={}), \
-                patch("sqlite3.connect", side_effect=AssertionError("production DB access")):
-            result = dashboard.ride_conditions_api(now_epoch=ANCHOR + 20)
-        self.assertEqual(encoded(result["exposureOutlook"]["arrivalChangeForecast"]),
-                         encoded(analysis["airWindow"]["arrivalChangeForecast"]))
-        self.assertEqual(encoded(result["exposureOutlook"]["firstCrossingEventForecast"]),
-                         encoded(analysis["airWindow"]["firstCrossingEventForecast"]))
-        self.assertEqual(result["exposureOutlook"]["arrival"]["projectedPm25UgM3"],
-                         analysis["airWindow"]["arrival"]["point"])
-        self.assertEqual(result["exposureOutlook"]["onTrail"]["projectedMeanPm25UgM3"],
-                         analysis["airWindow"]["trail"]["point"])
-        self.assertEqual(encoded(analysis), original)
 
 
 if __name__ == "__main__":

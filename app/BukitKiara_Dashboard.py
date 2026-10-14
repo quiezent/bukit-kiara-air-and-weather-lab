@@ -17,6 +17,7 @@ import sqlite3
 import sys
 import threading
 import time
+import warnings
 import webbrowser
 
 import numpy as np
@@ -57,7 +58,7 @@ import model_output_contracts
 import ride_pm_extrema
 import momentum_display
 import fresh_event_model_v2 as fresh_event_model
-import fresh_numeric_model_v4 as fresh_numeric_model
+import spatial_point_model
 import arrival_feature_inputs
 import arrival_logistic_model as arrival_change_model
 import fresh_model_output
@@ -150,17 +151,15 @@ DRY_CLEARING_MAX_PRECIPITATION = 0.1
 
 POLL_SECONDS = 180       # collect every 3 minutes
 RETENTION_DAYS = 400     # Preserve more than one year for future seasonal validation.
-RIDE_API_SCHEMA_VERSION = "1.37.0"
-DASHBOARD_BUILD = "2026-10-09-causal-numeric-training-v24.0.4-public.1"
+DASHBOARD_BUILD = "2026-10-14-coach-api-removed-v25.1.0-public.1"
 ACTIVE_VALIDATION_RECIPES = {
-    "point90": "near_fresh_arrival_model_direct_v23", "mean90_210": "near_fresh_mean_model_direct_v23",
+    "point90": "near_spatial_hgb_arrival_model_direct_v25", "mean90_210": "near_spatial_hgb_mean_model_direct_v25",
     "morningSession": "morning_hgb_model_direct_v21",
     "afternoonSession": "afternoon_patchtst_model_direct_v21",
 }
 RIDE_API_ANALYSIS_DAYS = 28.0
 SENSOR_DEGRADED_SECONDS = POLL_SECONDS * 2 + 60
 SENSOR_UNAVAILABLE_SECONDS = 15 * 60
-WEATHER_DEGRADED_SECONDS = 30 * 60
 KL_TZ = timezone(timedelta(hours=8))
 TREND_LOOKBACK_HOURS = 2
 MIN_WINDOW_BUCKETS = 12  # 75% of the sixteen 15-minute buckets in four hours
@@ -269,7 +268,6 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("BUKIT_KIARA_DATA_DIR", str(BASE_DIR))).expanduser().resolve()
 DB_PATH = DATA_DIR / "bukit_kiara_air_history.db"
 RADAR_SHADOW_PATH = DATA_DIR / "private" / "radar-shadow.jsonl"
-COACH_API_DOC_PATH = BASE_DIR.parent / "docs" / "COACH_API.md"
 
 FIELDS = [
     "pm01", "pm02", "pm10", "pm003Count", "atmp", "rhum", "rco2",
@@ -1111,7 +1109,7 @@ function renderAnalysis(a){
   if(a.freshSensorForecast?.modelVersion){
     $("localModelValidation").textContent=a.freshSensorForecast.performanceEvidence?.summary
       ||a.freshSensorForecast.training?.performanceEvidence?.summary
-      ||"Fresh sensor sequence model. Completed issued forecasts are being collected for accuracy checks.";
+      ||"Spatial neighbour model. Completed issued forecasts are being collected for accuracy checks.";
   }
   if(!storedHistoryLoaded)showStoredHistory(a.historyHours);
   const arrival=aw.arrival||{};
@@ -1300,6 +1298,9 @@ def db():
 
 def init_db():
     with db() as conn:
+        # WAL (persistent in the file): read transactions, such as the nightly
+        # refit snapshots, no longer block this writer for its 20 s timeout.
+        conn.execute("PRAGMA journal_mode=WAL").fetchone()
         conn.execute("""
         CREATE TABLE IF NOT EXISTS readings(
             epoch INTEGER PRIMARY KEY,
@@ -4809,9 +4810,12 @@ def passing_shower_signal(rows):
             f'PM10 ↓{event_metrics["pm10DropPct30"]:.0f}%'
         )
         if rain_support:
+            # A dry forming signal carries humidityRise30=None into the metrics.
+            humidity_rise = event_metrics["humidityRise30"]
             details += (
                 f' · heat index ↓{event_metrics["heatDrop30"]:.1f} °C'
-                f' · humidity ↑{event_metrics["humidityRise30"]:.0f}%'
+                + (' · humidity rise unavailable' if humidity_rise is None
+                   else f' · humidity ↑{humidity_rise:.0f}%')
             )
         elif dry_air_mass_clearing:
             details += (
@@ -6389,30 +6393,22 @@ def attach_first_crossing_event_forecast(air_window, rows, issue_epoch):
     return {**air_window, "firstCrossingEventForecast": json_safe(momentum_display.attach_display_text(candidate))}
 
 
-def attach_cycling_window_forecast(air_window, rows, issue_epoch):
-    """Infer the user's ride-average planning probability from a cached fit."""
+def attach_cycling_window_forecast(air_window, spatial_forecast, issue_epoch):
+    """Publish the E1 ride-average <=70 probability computed with the spatial point model.
+
+    The probability comes from the same cached fit and issue inputs as the published ride
+    mean; an unavailable input or model leaves it unavailable with its reason.
+    """
     issue = int(issue_epoch)
-    unavailable = {
-        "available": False, "modelVersion": cycling_window_live.MODEL_VERSION,
-        "experimental": True, "calibrated": False, "mode": "initial90",
-        "forecastIssuedEpoch": issue, "startEpoch": issue + 5400,
-        "endEpoch": issue + 12600, "cutoffUgM3": 70.0,
-        "chanceMeanAtOrBelowCutoff": None,
-        "reason": "fresh_sensor_reference_unavailable",
-    }
     try:
-        arrival = air_window.get("arrival") or {}
-        if not arrival.get("available") or not (arrival.get("freshnessAdjustment") or {}).get("applied"):
-            return {**air_window, "cyclingWindowForecast": unavailable}
-        origin = issue // 900 * 900
-        references, _, _ = forecast_freshness.references(rows, [origin], issue - origin, issue)
-        if not len(references) or not math.isfinite(float(references[0])):
-            return {**air_window, "cyclingWindowForecast": unavailable}
-        watermark = max(int(row["epoch"]) for row in rows if row["epoch"] <= issue)
-        candidate = cycling_window_live.predict_window(DB_PATH, rows, issue, watermark, float(references[0]))
+        candidate = spatial_point_model.cycling_window_output(spatial_forecast, issue)
     except Exception as error:
         print(f"[Cycling window] {type(error).__name__}: {error}")
-        candidate = {**unavailable, "reason": "calculation_unavailable"}
+        candidate = {"available": False, "modelVersion": spatial_point_model.LE70_MODEL_VERSION,
+                     "experimental": True, "calibrated": False, "mode": "initial90",
+                     "forecastIssuedEpoch": issue, "startEpoch": issue + 5400,
+                     "endEpoch": issue + 12600, "cutoffUgM3": 70.0,
+                     "chanceMeanAtOrBelowCutoff": None, "reason": "calculation_unavailable"}
     return {**air_window, "cyclingWindowForecast": json_safe(candidate)}
 
 
@@ -6468,6 +6464,42 @@ def cycling_window_json_schema():
                    "then": {"required": ["forecastIssuedEpoch", "startEpoch", "endEpoch", "mode", "cutoffUgM3", "referencePm", "chanceMeanAtOrBelowCutoff"],
                             "properties": {"referencePm": {"type": "number", "minimum": 0}, "chanceMeanAtOrBelowCutoff": {"type": "number", "minimum": 0, "maximum": 1}}}}],
         "additionalProperties": True,
+    }
+
+
+def dashboard_openapi():
+    """OpenAPI 3.1 description of the fixed-window /api/cycling-plan recheck."""
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "Bukit Kiara cycling-window recheck API",
+            "version": DASHBOARD_BUILD,
+        },
+        "servers": [{
+            "url": "/",
+            "description": "Resolve against the same dashboard host.",
+        }],
+        "paths": {
+            "/api/cycling-plan": {
+                "get": {
+                    "operationId": "recheckFixedCyclingWindow",
+                    "summary": "Recheck a tracked ride window against the personal 70 ug/m3 cutoff",
+                    "description": "Uses a cached model and current inputs for the original two-hour window. Call about 30 minutes after the initial forecast, with 55 to 65 minutes remaining before the ride starts. No fitting occurs in this request. This is a preparation aid, not a cycling clearance.",
+                    "parameters": [
+                        {"name": "startEpoch", "in": "query", "required": True,
+                         "schema": {"type": "integer"}},
+                        {"name": "endEpoch", "in": "query", "required": True,
+                         "schema": {"type": "integer"}},
+                    ],
+                    "responses": {
+                        "200": {"description": "Current probability or an explicit unavailable reason for the fixed window.",
+                                "content": {"application/json": {"schema": cycling_window_json_schema()}}},
+                        "400": {"description": "Missing or invalid window parameters."},
+                        "500": {"description": "Recheck could not be generated."},
+                    },
+                }
+            },
+        },
     }
 
 
@@ -8438,7 +8470,7 @@ def analysis_worker(stop_event=None):
                     print(f"[Arrival change archive] {type(error).__name__}: {error}")
             if cycling is not None:
                 try:
-                    cycling_window_live.record_issued_prediction(cycling, recorded_epoch=int(time.time()))
+                    spatial_point_model.record_issued_le70(cycling, recorded_epoch=int(time.time()))
                 except Exception as error:
                     print(f"[Cycling window archive] {type(error).__name__}: {error}")
         except Exception as error:
@@ -8699,33 +8731,16 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
             "summary": "Four inspected dates: 8 of 66 drops detected, 58 missed and 64 false alarms. Forecast accuracy remains limited; these overlapping historical issues are a development check.",
         },
     }
-    air_window = attach_cycling_window_forecast(air_window, rows, reference_epoch)
-    fresh_forecast = fresh_numeric_model.predict(rows, reference_epoch)
-    # Retain the exact issued feature vector for independent native-output
-    # checks, without changing the fitted recipe or any numerical output.
-    if fresh_forecast.get("available") and fresh_forecast.get("queryFeaturesHash"):
-        query_trace = fresh_numeric_model.sensor.issue_feature_frame(rows, [reference_epoch])
-        query_values = query_trace.to_numpy(dtype=float)
-        query_values[~np.isfinite(query_values)] = np.nan
-        if fresh_numeric_model._matrix_hash(query_trace.index, query_trace.columns, query_values) != fresh_forecast["queryFeaturesHash"]:
-            raise ValueError("issued_numeric_feature_trace_mismatch")
-        fresh_forecast = {**fresh_forecast, "featureColumns": list(query_trace.columns),
-                          "featureValues": [float(value) if math.isfinite(value) else None
-                                            for value in query_values[0]]}
-    fresh_forecast = {**fresh_forecast, "performanceEvidence": {
-        "state": "development_only", "prospectivelyValidated": False,
-        "modelVersion": fresh_numeric_model.MODEL_VERSION,
-        "arrivalCaseCount": 3232, "arrivalDateCount": 34, "overlappingIssues": True,
-        "arrivalMaeUgM3": 8.1124, "arrivalPersistenceMaeUgM3": 7.5402,
-        "arrivalEvaluationDates": ["2026-09-04", "2026-10-07"],
-        "rideCaseCount": 522, "rideDateCount": 7,
-        "trailMeanMaeUgM3": 10.9397, "previousTrailMeanMaeUgM3": 10.6953,
-        "summary": "Historical +90-minute comparison: 3,232 cases across 34 dates, average error 8.1 µg/m³; the sensor-reference comparator scored 7.5. A separate seven-date ride-mean check scored 10.9. Advance warning of large changes remains limited.",
-    }}
+    # v25: the spatial neighbour HGB publishes +90, the ride mean/min/max and (E1) the
+    # ride-mean <=70 probability from one cached fit and one set of issue-visible inputs.
+    # Its feature vector is retained with the forecast; outputs are published literally.
+    fresh_forecast = dict(spatial_point_model.predict(DB_PATH, rows, reference_epoch))
+    spatial_le70 = {"le70": fresh_forecast.pop("le70", None)}
+    air_window = attach_cycling_window_forecast(air_window, spatial_le70, reference_epoch)
     air_window = fresh_model_output.attach_outputs(air_window, fresh_forecast, reference_epoch)
     # Target clocks belong to the frozen issue, independently of whether a
     # numeric asset is available. Each learned head still validates its own clock.
-    air_window["forecastClock"] = fresh_numeric_model.forecast_clock(reference_epoch)
+    air_window["forecastClock"] = spatial_point_model.forecast_clock(reference_epoch)
     try:
         arrival_inputs = arrival_feature_inputs.load_inputs(
             DB_PATH, reference_epoch - 10800, reference_epoch, sensor_rows=rows
@@ -9074,6 +9089,7 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
             "id": "fixed_direct_models_with_arrival_change_v24",
             "sessionTargetPolicy": "canonical_09_11_and_14_16_with_90_minute_logistics_lead",
             "nearTermNumericalPolicy": fresh_model_output.VERSION,
+            "nearTermNumericalModelVersion": spatial_point_model.MODEL_VERSION,
             "sessionWeightPolicy": "none_fixed_models",
             "numericalPerformanceSelection": False,
             "numericPersistenceFallback": False,
@@ -9087,7 +9103,9 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
                 v.get("weatherAvailable") and
                 v.get("available")
                 for v in session_estimates.values()),
-            "nearTermWeatherUsedForParticleForecast": False,
+            # v25: issued Open-Meteo wind only weights the neighbour inputs of the spatial model.
+            "nearTermWeatherUsedForParticleForecast": bool(fresh_forecast.get("available")),
+            "neighbourPmInputsUsedForParticleForecast": bool(fresh_forecast.get("available")),
             "regionalPmInputVersion": regional_pm_inputs.VERSION,
             "regionalPmInputsUsedForParticleForecast": False,
             "nearTermModelReview": {
@@ -9112,7 +9130,7 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
             "firstCrossingEventThresholdUgM3": 20.0,
             "firstCrossingEventDecisionRule": "three_class_argmax_ties_unresolved",
             "firstCrossingEventSelection": "diagnostic_until_actual_cadence_prospective_qualification",
-            "cyclingWindowProbabilityModelVersion": cycling_window_live.MODEL_VERSION,
+            "cyclingWindowProbabilityModelVersion": spatial_point_model.LE70_MODEL_VERSION,
             "cyclingWindowProbabilitySelected": True,
             "cyclingWindowPlanningCutoffUgM3": 70.0,
             "cyclingWindowDisplay": "automatically_updated_probability",
@@ -9190,2408 +9208,6 @@ def compact_weather_window(window):
     return result
 
 
-def compact_regional_transport(transport):
-    """Expose bounded shadow evidence without publishing diagnostic telemetry."""
-    transport = transport or {}
-    evidence = transport.get("evidence") or {}
-    validation = evidence.get("validation") or {}
-    current = transport.get("current") or {}
-    by_lag = evidence.get("byLag") or {}
-    return {
-        "available": bool(transport),
-        "state": transport.get("state"),
-        "label": transport.get("label"),
-        "reason": transport.get("reason"),
-        "usedForParticleForecast": False,
-        "sourceBearingDegrees": transport.get("sourceBearing"),
-        "sourceAssumption": transport.get("sourceAssumption"),
-        "preRegisteredLagHours": transport.get("preRegisteredLagHours") or [],
-        "current": {
-            "available": bool(current),
-            "originAt": iso_from_epoch(current.get("originEpoch")),
-            "modeledWindSpeed925hPaKmh": current.get("windSpeed925hPa"),
-            "modeledWindDirection925hPaDegrees": current.get(
-                "windDirection925hPa"
-            ),
-            "modeledWindDirection925hPa": current.get(
-                "windDirection925hPaCompass"
-            ),
-            "sourceAlignment925hPa": current.get("sourceAlignment925"),
-            "sourceComponent925hPaKmh": current.get("sourceComponent925"),
-        },
-        "evidence": {
-            "issuedForecastDays": evidence.get("issuedForecastDays", 0),
-            "issuedOriginHours": evidence.get("issuedOriginHours", 0),
-            "lowAlignment925hPaOrigins": evidence.get(
-                "counterfactualOrigins", 0
-            ),
-            "lowAlignmentDefinition": evidence.get(
-                "counterfactualDefinition"
-            ),
-            "completedPairsByLagHours": {
-                str(lag): (by_lag.get(str(lag)) or {}).get("completedPairs", 0)
-                for lag in TRANSPORT_SHADOW_LAGS_HOURS
-            },
-            "walkForwardScoredOriginsByLagHours": {
-                str(lag): (
-                    ((by_lag.get(str(lag)) or {}).get("walkForward") or {})
-                    .get("scoredOrigins", 0)
-                )
-                for lag in TRANSPORT_SHADOW_LAGS_HOURS
-            },
-            "validation": {
-                "eligible": bool(validation.get("eligible")),
-                "stableLagCount": validation.get("stableLagCount", 0),
-                "requiredStableLags": validation.get(
-                    "requiredStableLags", TRANSPORT_SHADOW_MIN_STABLE_LAGS
-                ),
-                "reasons": validation.get("reasons") or [],
-            },
-        },
-    }
-
-
-def compact_window_baseline(baseline):
-    baseline = baseline or {}
-
-    def distribution(key):
-        values = baseline.get(key) or {}
-        return {
-            "recencyWeightedMedian": values.get("median"),
-            "unweightedObservedQ1": values.get("q1"),
-            "unweightedObservedQ3": values.get("q3"),
-        }
-
-    return {
-        "available": bool(baseline.get("available")),
-        "validDays": baseline.get("validDays", 0),
-        "pairedDays": baseline.get("pairedDays", 0),
-        "coveragePct": baseline.get("coveragePct"),
-        "pm25MeanUgM3": distribution("pmMean"),
-        "pm25WorstHourUgM3": distribution("pmWorstHour"),
-        "heatIndexPeakC": distribution("heatPeak"),
-    }
-
-
-def compact_window_particle_forecast(forecast):
-    forecast = forecast or {}
-    candidate = forecast.get("candidate") or {}
-    forecast_state = str(forecast.get("forecastState") or "")
-    point_role = forecast.get("pointRole")
-    is_session_policy = forecast.get("modelVersion") in (
-        window_pm_predictor.MODEL_VERSION, weather_session_forecast.MODEL_VERSION,
-        afternoon_xgboost_forecast.MODEL_VERSION,
-        patchtst_session_forecast.MODEL_VERSION,
-    )
-    has_model_point = bool(forecast.get("available") and num(forecast.get("point")) is not None and point_role in {
-        "validated_forecast", "aggressive_cams_forecast",
-        "provisional_cams_context", "aggressive_local_ridge",
-        "aggressive_rapid_clearance_event", "experimental_window_mean",
-        "experimental_model_output", "raw_model_output",
-    })
-    has_peak_model_point = bool(
-        forecast.get("peakApproximate") or has_model_point
-    )
-    validation_state = (
-        "validated" if forecast.get("validated") else
-        "mixed_persistence_mean_experimental_peak"
-        if (forecast.get("peakApproximate") and not has_model_point) else
-        "experimental_not_validated"
-        if (forecast_state.startswith("aggressive_")
-            or forecast_state.startswith("experimental_")
-            or forecast_state.startswith("local_near_term_experimental")
-            or forecast_state == "model_output") else
-        "provisional_context_only"
-        if forecast_state.startswith("provisional_") else
-        "persistence_only"
-    )
-    comparison_low = num(forecast.get("comparisonRangeLow"))
-    comparison_high = num(forecast.get("comparisonRangeHigh"))
-    comparison_interval_available = bool(
-        comparison_low is not None and comparison_high is not None
-        and comparison_high > comparison_low
-    )
-    return {
-        "available": bool(forecast.get("available")),
-        "modelPointApplied": bool(has_model_point),
-        "forecastState": forecast.get("forecastState"),
-        "pointRole": point_role,
-        "method": forecast.get("method"),
-        "modelVersion": forecast.get("modelVersion"),
-        "directionalModel": forecast.get("directionalModel") or {},
-        "sessionDeltaModel": forecast.get("sessionDeltaModel") or {},
-        "weatherSessionModel": forecast.get("weatherSessionModel") or {},
-        "patchtstModel": forecast.get("patchtstModel") or {},
-        "experimentalXgboostFallback": forecast.get("experimentalXgboostFallback") or {},
-        "experimentalPatchtstFallback": forecast.get("experimentalPatchtstFallback") or {},
-        "modelSelection": forecast.get("modelSelection") or {},
-        "candidateForecast": forecast.get("candidateForecast") or {},
-        "modelOutputPolicy": forecast.get("modelOutputPolicy") or {},
-        "performanceEvidence": forecast.get("performanceEvidence") or {},
-        "numericalPolicyIdentifier": forecast.get("numericalPolicyIdentifier"),
-        "usedForDecision": bool(forecast.get("usedForDecision")),
-        "validated": bool(forecast.get("validated")),
-        "prospectivelyValidated": bool(forecast.get("prospectivelyValidated")),
-        "qualificationPolicy": forecast.get("qualificationPolicy") or {},
-        "confidence": confidence_code(forecast.get("confidence")),
-        "confidenceDetail": forecast.get("confidence"),
-        "baselineMeanPm25UgM3": forecast.get("baselinePoint"),
-        "publishedMeanPm25UgM3": forecast.get("point"),
-        "persistenceAnchorRole": forecast.get(
-            "persistenceAnchorRole", "latest_raw_sensor_reading"
-        ),
-        "persistenceAnchorAt": iso_from_epoch(
-            forecast.get("persistenceAnchorEpoch")
-        ),
-        "projectedMeanPm25UgM3": (
-            forecast.get("point") if has_model_point else None
-        ),
-        "projectedPeakPm25UgM3": (
-            forecast.get("projectedPeak") if has_peak_model_point else None
-        ),
-        "approximate": bool(forecast.get("pointApproximate")),
-        "validationState": validation_state,
-        "validatedModelPointApplied": bool(forecast.get("validated")),
-        "planningEstimate": {
-            "available": bool(has_model_point or has_peak_model_point),
-            "meanPm25UgM3": forecast.get("point") if has_model_point else None,
-            "peakPm25UgM3": (
-                forecast.get("projectedPeak") if has_peak_model_point else None
-            ),
-            "role": point_role,
-            "validationState": validation_state,
-            "eligibleForDirectComparison": bool(
-                has_model_point and forecast.get(
-                    "usedForComparison", forecast.get("usedForDecision")
-                )
-            ),
-        },
-        "modelEvidence": forecast.get("modelEvidence") or {},
-        "modelNote": forecast.get("modelNote"),
-        "freshnessAdjustment": forecast.get("freshnessAdjustment") or {},
-        "rainContext": forecast.get("rainContext") or {},
-        "weatherSourceClock": forecast.get("weatherSourceClock") or {},
-        "rainLearning": forecast.get("rainLearning") or {},
-        "componentWeights": forecast.get("componentWeights") or {},
-        "componentEstimatesPm25UgM3": forecast.get("componentEstimates") or {},
-        "componentEstimatesRole": forecast.get("componentEstimatesRole"),
-        "closedReferenceMeanPm25UgM3": forecast.get("closedReferenceMeanPm25UgM3"),
-        "sourceSnapshots": forecast.get("sourceSnapshots") or {},
-        "regionalCorrectionTrial": forecast.get("regionalCorrectionTrial"),
-        "uncertainty": {
-            "state": (
-                "collecting" if forecast.get("rawRangeLow") is None else
-                "uncalibrated_as_issued_errors" if is_session_policy else
-                "uncalibrated_matched_history"
-                if forecast.get("rawRangeLow") is not None else "collecting"
-            ),
-            "displayRole": "secondary_explanation",
-            "typicalMatchedHistoryBandPm25UgM3": {
-                "low": forecast.get("typicalRangeLow"),
-                "high": forecast.get("typicalRangeHigh"),
-                "quantiles": [0.25, 0.75],
-                "calibrated": False,
-                "role": "descriptive_middle_half_of_matched_outcomes",
-            },
-            "conservativeMatchedHistorySpanPm25UgM3": {
-                "low": forecast.get("rawRangeLow"),
-                "high": forecast.get("rawRangeHigh"),
-                "quantiles": [0.10, 0.90],
-                "nominalCoverage": None,
-                "calibrated": False,
-                "role": "uncalibrated_historical_error_span",
-            },
-            "highSidePeakMarkerPm25UgM3": forecast.get("peakUpper"),
-            "highSidePeakQuantile": None,
-            "highSidePeakMarkerRole": (
-                "persistence_anchor_containing_marker_not_a_quantile"
-            ),
-            "empiricalPeakQ90Pm25UgM3": {
-                "value": forecast.get("rawPeakUpper90"),
-                "quantile": 0.90,
-                "nominalCoverage": None,
-                "calibrated": False,
-                "role": "uncalibrated_empirical_matched_history_quantile",
-            },
-            "note": (
-                "No model-specific prediction interval is available; the previous model's residual range is not reused."
-                if ((forecast.get("directionalModel") or {}).get("applied")
-                    or (forecast.get("sessionDeltaModel") or {}).get("applied")) else
-                "Matched same-clock issued outcomes are still accumulating; no session error span is available."
-                if is_session_policy and forecast.get("rawRangeLow") is None else
-                "Same-target, same-clock issued session errors; a small and uncalibrated prediction span."
-                if is_session_policy else
-                "Descriptive matched-history evidence; not the planning estimate "
-                "and not a calibrated prediction interval."
-            ),
-        },
-        "meanRangePm25UgM3": {
-            "low": forecast.get("rawRangeLow"),
-            "high": forecast.get("rawRangeHigh"),
-            "quantiles": [0.10, 0.90],
-            "nominalCoverage": None,
-            "calibrated": False,
-            "role": "uncalibrated_historical_error_span",
-            "displayRole": "secondary_explanation",
-            "deprecated": True,
-        },
-        "upperPeakPm25UgM3": forecast.get("peakUpper"),
-        "uncertaintyMethod": forecast.get("uncertaintyMethod"),
-        "comparisonIntervalPm25UgM3": {
-            "available": comparison_interval_available,
-            "state": (
-                forecast.get("comparisonIntervalState")
-                or ("available_uncalibrated_empirical_span"
-                    if comparison_interval_available else "not_available")
-            ),
-            "low": comparison_low if comparison_interval_available else None,
-            "high": comparison_high if comparison_interval_available else None,
-            "upperPeak": (
-                forecast.get("comparisonPeakUpper")
-                if comparison_interval_available else None
-            ),
-            "method": forecast.get("comparisonIntervalMethod"),
-            "nominalCoverage": None,
-            "calibrated": False,
-            "role": "task_specific_empirical_residual_span",
-            "usedOnlyWhenTaskValidated": True,
-        },
-        "leadHours": forecast.get("leadHours"),
-        "durationHours": forecast.get("durationHours"),
-        "support": {
-            "originCount": forecast.get("originCount"),
-            "independentOriginCount": forecast.get("independentOriginCount"),
-            "matchedCount": forecast.get("matchedCount"),
-            "matchedDistinctDays": forecast.get("matchedDistinctDays"),
-        },
-        "experimentalCamsCandidate": {
-            "available": bool(candidate.get("available")),
-            "modelPointApplied": bool(candidate.get("usedForDecision")),
-            "usedForDisplay": bool(candidate.get("usedForDisplay")),
-            "source": candidate.get("source"),
-            "fetchedAt": iso_from_epoch(candidate.get("fetchedEpoch")),
-            "ageMinutes": candidate.get("ageMinutes"),
-            "modelCurrentAgeMinutes": candidate.get("modelCurrentAgeMinutes"),
-            "issuedAgeEligible": bool(candidate.get("issuedAgeEligible")),
-            "validationState": candidate.get("validationState"),
-            "suppressedByRegimeBreak": bool(
-                candidate.get("suppressedByRegimeBreak")
-            ),
-            "sensorModelLevelDifferenceUgM3": candidate.get(
-                "sensorModelLevelDifference"
-            ),
-            "sensorModelLevelDifferenceRole": candidate.get(
-                "sensorModelLevelDifferenceRole"
-            ),
-            "regimeSuppressionReason": candidate.get("regimeSuppressionReason"),
-            "regimeSuppressionHorizonHours": candidate.get(
-                "regimeSuppressionHorizonHours"
-            ),
-            "validationTask": candidate.get("validationTask"),
-            "leadValidated": bool(candidate.get("leadValidated")),
-            "sensorAnchoredMeanPm25UgM3": candidate.get("mean"),
-            "sensorAnchoredPeakPm25UgM3": candidate.get("peak"),
-            "rawModelMeanPm25UgM3": candidate.get("rawModelMean"),
-            "rawModelPeakPm25UgM3": candidate.get("rawModelPeak"),
-            "deltaShrink": candidate.get("deltaShrink"),
-        },
-    }
-
-
-def confidence_code(value):
-    text = str(value or "").strip().lower()
-    for level in ("high", "medium", "low", "insufficient"):
-        if text.startswith(level):
-            return level
-    return "insufficient"
-
-
-def exposure_method_id(value):
-    methods = {
-        "Rain-aware local PM model": "rain_nearterm_ridge_v1",
-        "Recent-sensor persistence with matched historical errors":
-            "fresh_sensor_persistence_v1",
-        "Persistence baseline with similar-level empirical errors":
-            "persistence_similar_level_errors_v1",
-        "Gated damped momentum with prior fast-rise errors":
-            "gated_momentum_fast_rise_errors_v1",
-        "Persistence with prior fast-rise event errors":
-            "persistence_fast_rise_event_errors_v2",
-        "Persistence with prior joint-washout errors":
-            "persistence_joint_clearance_errors_v1",
-        "Persistence with prior joint-washout event errors":
-            "persistence_joint_clearance_event_errors_v2",
-        "Persistence with similar-level trail errors":
-            "persistence_similar_level_trail_errors_v1",
-        "Damped aggressive local analogue with persistence envelope":
-            "aggressive_local_analogue_arrival_v1",
-        "Aggressive local analogue mean with Ridge peak":
-            "aggressive_local_analogue_trail_v1",
-        "Aggressive rapid-clearance event analogue with persistence envelope":
-            "aggressive_rapid_clearance_event_v1",
-        "Replay-screened damped local analogue with historical error bounds":
-            "replay_screened_local_analogue_arrival_v3",
-        "Experimental local analogue mean and bounded analogue peak":
-            "replay_screened_local_analogue_mean_peak_v3",
-        "Persistence mean with experimental bounded analogue peak":
-            "replay_screened_local_analogue_peak_only_v3",
-        "Experimental robust Ridge mean and bounded analogue peak":
-            "issued_screened_ridge_mean_analogue_peak_v1",
-        "Scale-normalized rapid-clearance event analogue with historical error bounds":
-            "scale_normalized_rapid_clearance_event_v2",
-    }
-    return methods.get(value, "unavailable")
-
-
-def ride_api_links():
-    """Canonical relative links keep localhost and LAN clients portable."""
-    return {
-        "self": "/api/v1/mtb/environment-evidence",
-        "openapi": "/api/openapi.json",
-        "jsonSchema": "/api/v1/mtb/environment-evidence/schema",
-        "documentation": "/docs/coach-api.md",
-        "sourceCurrent": "/api/current",
-        "sourceAnalysis": "/api/analysis?days=28",
-    }
-
-
-def coach_api_document_bytes():
-    """Read the living Coach guide on every request so edits need no restart."""
-    try:
-        return COACH_API_DOC_PATH.read_bytes()
-    except OSError:
-        return (
-            "# MTB environmental evidence API\n\n"
-            "The documentation file is temporarily unavailable. Discover the "
-            "machine contract at `/api/openapi.json`.\n"
-        ).encode("utf-8")
-
-
-def ride_evidence_json_schema():
-    """Stable JSON Schema for the public environmental evidence boundary."""
-    nullable_number = {"type": ["number", "null"]}
-    nullable_string = {"type": ["string", "null"]}
-    empirical_range_schema = {
-        "type": ["object", "null"],
-        "description": (
-            "Raw finite-sample empirical endpoints. This is descriptive and "
-            "is not a calibrated prediction interval."
-        ),
-        "properties": {
-            "low": nullable_number,
-            "high": nullable_number,
-            "quantiles": {
-                "type": "array",
-                "prefixItems": [{"const": 0.10}, {"const": 0.90}],
-                "minItems": 2,
-                "maxItems": 2,
-            },
-            "nominalCoverage": {"type": "null"},
-            "calibrated": {"const": False},
-        },
-        "additionalProperties": True,
-    }
-    display_envelope_schema = {
-        "type": ["object", "null"],
-        "description": (
-            "Display envelope widened to contain named anchors or scenarios; "
-            "it has no quantile or coverage interpretation."
-        ),
-        "properties": {
-            "low": nullable_number,
-            "high": nullable_number,
-            "containsPersistenceAnchor": {"type": "boolean"},
-            "containsBaseline": {"type": "boolean"},
-            "containsExperimentalProjection": {"type": "boolean"},
-            "coverageClaimed": {"const": False},
-            "role": nullable_string,
-        },
-        "additionalProperties": True,
-    }
-    empirical_upper_schema = {
-        "type": ["object", "null"],
-        "description": (
-            "Raw finite-sample empirical upper quantile; not an anchor-expanded "
-            "display bound and not calibrated."
-        ),
-        "properties": {
-            "value": nullable_number,
-            "quantile": {"const": 0.90},
-            "finiteSampleRank": {"type": "boolean"},
-            "finiteSampleRankCoverage": nullable_number,
-            "calibrated": {"const": False},
-            "role": nullable_string,
-        },
-        "additionalProperties": True,
-    }
-    issue_schema = {
-        "type": "object",
-        "required": ["code"],
-        "properties": {
-            "code": {"type": "string"},
-            "severity": {
-                "type": "string",
-                "enum": ["warning", "error"],
-            },
-            "message": {"type": "string"},
-        },
-        "additionalProperties": True,
-    }
-    rapid_change_target_schema = {
-        "type": "object",
-        "required": ["available"],
-        "properties": {
-            "available": {"type": "boolean"},
-            "probability": {"type": "number", "minimum": 0, "maximum": 1},
-            "flag": {
-                "type": "boolean",
-                "description": "True when the experimental probability reaches the fixed 0.20 threshold; it does not indicate rising or falling PM2.5.",
-            },
-            "targetEpoch": {"type": "integer"},
-            "startEpoch": {"type": "integer"},
-            "endEpoch": {"type": "integer"},
-            "completionEpoch": {"type": "integer"},
-            "trainingCount": {"type": "integer", "minimum": 0},
-            "trainingEvents": {"type": "integer", "minimum": 0},
-            "lastTrainingIssueEpoch": {"type": "integer"},
-            "lastTrainingOutcomeCompleteEpoch": {"type": "integer"},
-            "reason": nullable_string,
-        },
-        "additionalProperties": True,
-    }
-    rapid_change_schema = {
-        "type": "object",
-        "required": ["available"],
-        "allOf": [{
-            "if": {"properties": {"available": {"const": True}}},
-            "then": {"required": ["experimental", "prospectivelyValidated",
-                                   "directionAvailable", "thresholdUgM3",
-                                   "probabilityThreshold", "targets"]},
-        }],
-        "description": (
-            "Separate experimental probability that the exact +90-minute PM2.5 target or "
-            "+90-to-+210-minute mean differs from the as-issued sensor reference by at least "
-            "20 µg/m³ in either direction. It never changes the main PM2.5 point, empirical "
-            "range, or ride-window comparison and has no prospective validation."
-        ),
-        "properties": {
-            "available": {"type": "boolean"},
-            "modelVersion": nullable_string,
-            "experimental": {"const": True},
-            "prospectivelyValidated": {"const": False},
-            "calibrated": {"const": False},
-            "directionAvailable": {"const": False},
-            "thresholdUgM3": {"const": 20.0},
-            "probabilityThreshold": {"const": 0.20},
-            "definition": nullable_string,
-            "sourceIssueEpoch": {"type": "integer"},
-            "featureAnchorEpoch": {"type": ["integer", "null"]},
-            "freshPm25UgM3": nullable_number,
-            "trainingCutoffEpoch": {"type": "integer"},
-            "trainedThroughIssueDay": {"type": "string", "format": "date"},
-            "trainingWindowDays": {"type": "integer", "minimum": 1},
-            "reason": nullable_string,
-            "targets": {
-                "type": "object",
-                "properties": {
-                    "arrival90": rapid_change_target_schema,
-                    "mean90to210": rapid_change_target_schema,
-                },
-                "additionalProperties": False,
-            },
-        },
-        "additionalProperties": True,
-    }
-    short_change_target_schema = {
-        "type": "object", "required": ["available", "targetEpoch"],
-        "properties": {
-            "available": {"type": "boolean"},
-            "horizonMinutes": {"enum": [15, 30]},
-            "targetEpoch": {"type": "integer"},
-            "observedOutcomeCompleteAfterEpoch": {"type": "integer"},
-            "riseProbability": {"type": "number", "minimum": 0, "maximum": 1},
-            "fallProbability": {"type": "number", "minimum": 0, "maximum": 1},
-            "stableProbability": {"type": "number", "minimum": 0, "maximum": 1},
-            "trainingCount": {"type": "integer", "minimum": 0},
-            "riseEvents": {"type": "integer", "minimum": 0},
-            "fallEvents": {"type": "integer", "minimum": 0},
-            "largeEventProbabilityAvailable": {"const": False},
-            "reason": nullable_string,
-        }, "additionalProperties": True,
-    }
-    short_change_schema = {
-        "type": "object", "required": ["available"],
-        "description": (
-            "Diagnostic-only, uncalibrated +15/+30-minute probabilities of a rise or fall "
-            "of at least 10 µg/m³ from the as-issued recent sensor reference. Large-change "
-            "probabilities are unavailable for lack of examples. Never changes a PM forecast point."
-        ),
-        "properties": {
-            "available": {"type": "boolean"},
-            "experimental": {"const": True},
-            "prospectivelyValidated": {"const": False},
-            "calibrated": {"const": False},
-            "appliedToPrimaryForecast": {"const": False},
-            "modelVersion": nullable_string,
-            "targetVersion": nullable_string,
-            "thresholdUgM3": {"const": 10.0},
-            "largeEventThresholdUgM3": {"const": 20.0},
-            "sourceIssueEpoch": {"type": "integer"},
-            "trainingCutoffEpoch": {"type": "integer"},
-            "referencePm25UgM3": nullable_number,
-            "reason": nullable_string,
-            "targets": {"type": "object", "properties": {
-                "minutes15": short_change_target_schema,
-                "minutes30": short_change_target_schema,
-            }, "additionalProperties": False},
-        }, "additionalProperties": True,
-    }
-    first_crossing_schema = {
-        "type": "object", "required": ["available"],
-        "description": (
-            "User-selected experimental first rise/drop of at least 20 ug/m3 within 90 minutes, "
-            "sampled at six 15-minute median-proxy targets. This is an event-direction forecast; "
-            "the +90-minute concentration is the separate fixed analogue model output. Probabilities are uncalibrated. "
-            "The largest of drop, no crossing and rise probabilities determines the call; ties are unresolved. "
-            "The threshold is a change relative to referencePm, not an exact magnitude or endpoint estimate. "
-            "displayText presents the diagnostic outcome and does not imply operational qualification."
-        ),
-        "properties": {
-            "available": {"type": "boolean"},
-            "modelVersion": nullable_string,
-            "experimental": {"const": True},
-            "calibrated": {"const": False},
-            "displayText": {"type": ["string", "null"], "description": "Shared server momentum label from the highest-probability diagnostic first-crossing outcome; independent of operational qualification. Null when unavailable or malformed."},
-            "forecastIssuedEpoch": {"type": "integer"},
-            "validUntilEpoch": {"type": "integer"},
-            "referencePm": nullable_number,
-            "changeThresholdUgM3": {"const": 20},
-            "direction": {"enum": ["rise", "drop", "unresolved"]},
-            "directionDecision": {"const": "three_class_argmax_ties_unresolved"},
-            "thresholdComparison": {"const": "at_least"},
-            "target": {"const": "first_sampled_crossing_within90_minutes"},
-            "probabilityRise": {"type": "number", "minimum": 0, "maximum": 1},
-            "probabilityDrop": {"type": "number", "minimum": 0, "maximum": 1},
-            "probabilityNoCrossing": {"type": "number", "minimum": 0, "maximum": 1},
-            "trainingCutoffEpoch": {"type": "integer"},
-            "fittedAtEpoch": {"type": "integer"},
-            "unvalidatedLiveCadence": {"const": True},
-            "reason": nullable_string,
-            "horizons": {"type": "array", "items": {
-                "type": "object", "required": ["leadMinutes", "probabilityRise", "probabilityDrop", "probabilityNoCrossing"],
-                "properties": {
-                    "leadMinutes": {"enum": [15, 30, 45, 60, 75, 90]},
-                    "probabilityRise": {"type": "number", "minimum": 0, "maximum": 1},
-                    "probabilityDrop": {"type": "number", "minimum": 0, "maximum": 1},
-                    "probabilityNoCrossing": {"type": "number", "minimum": 0, "maximum": 1},
-                }, "additionalProperties": True,
-            }},
-        }, "additionalProperties": True,
-    }
-    exposure_schema = {
-        "type": "object",
-        "required": ["available"],
-        "properties": {
-            "available": {"type": "boolean"},
-            "offsetMinutes": {"type": ["integer", "null"], "description": "Offset from forecastIssuedAt, not response delivery."},
-            "startOffsetMinutes": {"type": ["integer", "null"], "description": "Offset from forecastIssuedAt, not response delivery."},
-            "endOffsetMinutes": {"type": ["integer", "null"], "description": "Offset from forecastIssuedAt, not response delivery."},
-            "expectedAt": {
-                "type": ["string", "null"], "format": "date-time"
-            },
-            "startAt": {"type": ["string", "null"], "format": "date-time"},
-            "endAt": {"type": ["string", "null"], "format": "date-time"},
-            "forecastIssuedAt": {"type": ["string", "null"], "format": "date-time"},
-            "targetVersion": nullable_string,
-            "targetDefinition": nullable_string,
-            "meanTargetDefinition": nullable_string,
-            "peakTargetDefinition": nullable_string,
-            "rideMinimumMaximumPm25UgM3": {
-                "type": "object", "additionalProperties": True,
-                "description": "Literal joint model outputs for the minimum and maximum covered 15-minute bucket medians overlapping the exact +90..210-minute ride window. Separate from the mean; not a confidence interval or continuous-time extreme guarantee.",
-                "properties": {"available": {"type": "boolean"}, "low": nullable_number,
-                               "high": nullable_number, "modelVersion": nullable_string,
-                               "targetResolutionMinutes": {"const": 15}},
-            },
-            "basedOnObservedAt": {
-                "type": ["string", "null"], "format": "date-time"
-            },
-            "persistenceAnchorPm25UgM3": nullable_number,
-            "persistenceAnchorRole": nullable_string,
-            "persistenceAnchorAt": {
-                "type": ["string", "null"], "format": "date-time"
-            },
-            "modelFeatureAnchorPm25UgM3": nullable_number,
-            "freshnessAdjustment": {
-                "type": "object",
-                "description": "Experimental observed-reference refresh; does not anticipate sudden events. The feature anchor and recent reference timestamps differ.",
-                "properties": {
-                    "applied": {"type": "boolean"},
-                    "amountUgM3": nullable_number,
-                    "featureAnchorEpoch": nullable_number,
-                    "referenceEpoch": nullable_number,
-                    "referenceCount": {"type": ["integer", "null"]},
-                    "prospectivelyValidated": {"const": False},
-                },
-                "additionalProperties": True,
-            },
-            "projectedPm25UgM3": nullable_number,
-            "projectedMeanPm25UgM3": nullable_number,
-            "projectedPeakPm25UgM3": nullable_number,
-            "baselinePm25UgM3": {
-                **nullable_number,
-                "deprecated": True,
-                "description": "Deprecated 1.x alias for the persistence anchor.",
-            },
-            "baselineMeanPm25UgM3": {
-                **nullable_number,
-                "deprecated": True,
-                "description": "Deprecated 1.x alias for the persistence anchor.",
-            },
-            "pointRole": nullable_string,
-            "forecastState": nullable_string,
-            "approximate": {"type": "boolean"},
-            "validationState": nullable_string,
-            "meanValidationState": nullable_string,
-            "peakValidationState": nullable_string,
-            "likelyRangePm25UgM3": empirical_range_schema,
-            "likelyMeanRangePm25UgM3": empirical_range_schema,
-            "forecastRangePm25UgM3": display_envelope_schema,
-            "forecastMeanRangePm25UgM3": display_envelope_schema,
-            "forecastUpperPm25UgM3": nullable_number,
-            "forecastPeakUpperPm25UgM3": nullable_number,
-            "upperPm25UgM3": empirical_upper_schema,
-            "upperMeanPm25UgM3": empirical_upper_schema,
-            "upperPeakPm25UgM3": empirical_upper_schema,
-            "decisionEnvelopePm25UgM3": {
-                **display_envelope_schema,
-                "deprecated": True,
-            },
-            "decisionMeanEnvelopePm25UgM3": {
-                **display_envelope_schema,
-                "deprecated": True,
-            },
-            "decisionUpperPm25UgM3": {
-                **nullable_number,
-                "deprecated": True,
-            },
-            "decisionPeakRiskMarkerPm25UgM3": {
-                **nullable_number,
-                "deprecated": True,
-            },
-            "confidence": {
-                "type": "string",
-                "enum": ["high", "medium", "low", "insufficient"],
-            },
-            "confidenceDetail": nullable_string,
-            "methodId": {"type": "string"},
-            "rapidClearanceEventSupport": {
-                "type": ["object", "null"],
-                "additionalProperties": True,
-            },
-            "support": {"type": "object", "additionalProperties": True},
-        },
-        "additionalProperties": True,
-    }
-    ride_particle_schema = {
-        "type": ["object", "null"],
-        "properties": {
-            "modelVersion": nullable_string,
-            "modelSelection": {
-                "type": "object", "additionalProperties": True,
-                "description": "Historical selection metadata; current fixed model outputs use no numerical selector.",
-            },
-            "candidateForecast": {
-                "type": "object", "additionalProperties": True,
-                "description": "Literal fixed model output. Its mean equals publishedMeanPm25UgM3 without deadband, baseline substitution or performance selection.",
-            },
-            "modelOutputPolicy": {"type": "object", "additionalProperties": True},
-            "performanceEvidence": {"type": "object", "additionalProperties": True},
-            "numericalPolicyIdentifier": nullable_string,
-            "usedForDecision": {"type": "boolean"},
-            "validated": {"type": "boolean"},
-            "prospectivelyValidated": {"type": "boolean"},
-            "publishedMeanPm25UgM3": nullable_number,
-            "patchtstModel": {
-                "type": "object", "additionalProperties": True,
-                "description": "Original daily cached PatchTST identity, exact input clocks, literal raw mean and descriptive extrapolation metadata; no deadband or alternate-model fallback.",
-            },
-            "experimentalPatchtstFallback": {
-                "type": "object", "additionalProperties": True,
-                "description": "Historical field. Current missing PatchTST outputs are unavailable with no alternate model retained.",
-            },
-            "directionalModel": {
-                "type": "object",
-                "description": "Shadow-only same-day afternoon direction experiment. Historical issue and target clocks are aligned; it cannot replace the selected point without issued validation.",
-                "properties": {
-                    "applied": {"type": "boolean"},
-                    "direction": {"enum": ["rising", "falling", "steady"]},
-                    "changeFromFreshUgM3": nullable_number,
-                    "experimental": {"const": True},
-                    "prospectivelyValidated": {"const": False},
-                    "scope": {"type": "object", "additionalProperties": True},
-                    "retrospectiveReview": {"type": "object", "additionalProperties": True},
-                },
-                "additionalProperties": True,
-            },
-            "sessionDeltaModel": {
-                "type": "object",
-                "description": "Withheld afternoon session-change experiment; no completed issued-outcome evidence supports primary selection.",
-                "properties": {
-                    "applied": {"type": "boolean"},
-                    "changeFromFreshUgM3": nullable_number,
-                    "directionAtFiveUgM3": {"enum": ["rising", "falling", "steady"]},
-                    "parameters": {"type": "object", "additionalProperties": True},
-                },
-                "additionalProperties": True,
-            },
-            "weatherSessionModel": {
-                "type": "object", "additionalProperties": True,
-                "description": "Experimental daily-fitted session change learner: exact issued weather, completed-label training cutoff, used feature columns, richer weather diagnostics and fallback reason. Replay is separate from frozen issued accuracy.",
-            },
-            "regionalCorrectionTrial": {
-                "type": ["object", "null"],
-                "description": (
-                    "Separate experimental CAMS plus learned local correction. "
-                    "Never substitutes for projectedMeanPm25UgM3 or comparison. "
-                    "Status distinguishes a paused live fit from unavailable model inputs. "
-                    "Retrieval time is not native CAMS model initialization time."
-                ),
-                "properties": {
-                    "available": {"type": "boolean"},
-                    "status": {"enum": ["suspended_live_diagnostics", "available", "unavailable"]},
-                    "modelVersion": nullable_string,
-                    "meanPm25UgM3": nullable_number,
-                    "appliedToPrimaryForecast": {"const": False},
-                    "prospectivelyValidated": {"const": False},
-                    "eligibleForDirectComparison": {"const": False},
-                    "forecastIssuedAt": {"type": ["string", "null"], "format": "date-time"},
-                    "sensorAnchorAt": {"type": ["string", "null"], "format": "date-time"},
-                    "regionalDataRetrievedAt": {"type": ["string", "null"], "format": "date-time"},
-                    "reason": nullable_string,
-                    "modelEvidence": {"type": "object", "additionalProperties": True},
-                    "regionalCorrection": {
-                        "type": ["object", "null"],
-                        "description": "Trial mean = max(0, regional mean + signed learned correction), allowing rounding. Not an additional fire contribution.",
-                        "properties": {
-                            "regionalMeanPm25UgM3": nullable_number,
-                            "learnedCorrectionPm25UgM3": nullable_number,
-                            "unboundedMeanPm25UgM3": nullable_number,
-                            "nonnegativeFloorApplied": {"type": "boolean"},
-                            "currentRegionalPm25UgM3": nullable_number,
-                            "currentLocalCorrectionPm25UgM3": nullable_number,
-                            "method": nullable_string,
-                        },
-                        "additionalProperties": True,
-                    },
-                },
-                "additionalProperties": True,
-            },
-            "uncertainty": {
-                "type": ["object", "null"],
-                "properties": {
-                    "highSidePeakQuantile": {
-                        "type": "null",
-                        "deprecated": True,
-                        "description": (
-                            "Always null: the adjacent marker may be widened "
-                            "and has no quantile interpretation."
-                        ),
-                    },
-                    "highSidePeakMarkerRole": nullable_string,
-                    "empiricalPeakQ90Pm25UgM3": empirical_upper_schema,
-                },
-                "additionalProperties": True,
-            },
-            "meanRangePm25UgM3": {
-                **empirical_range_schema,
-                "deprecated": True,
-            },
-            "comparisonIntervalPm25UgM3": {
-                "type": ["object", "null"],
-                "properties": {
-                    "available": {"type": "boolean"},
-                    "state": nullable_string,
-                    "low": nullable_number,
-                    "high": nullable_number,
-                    "upperPeak": nullable_number,
-                    "nominalCoverage": {"type": "null"},
-                    "calibrated": {"const": False},
-                    "role": {"const": "task_specific_empirical_residual_span"},
-                    "usedOnlyWhenTaskValidated": {"const": True},
-                },
-                "additionalProperties": True,
-            },
-        },
-        "additionalProperties": True,
-    }
-    ride_window_schema = {
-        "type": "object",
-        "required": ["forecastIssuedAt", "forecastedLabel"],
-        "properties": {
-            "targetDay": {**nullable_string, "description": "Display day relative to the original forecast issue; startAt/endAt retain the absolute session date."},
-            "startAt": {"type": ["string", "null"], "format": "date-time"},
-            "endAt": {"type": ["string", "null"], "format": "date-time"},
-            "rideWindow": nullable_string,
-            "modeledSession": nullable_string,
-            "leadHours": nullable_number,
-            "active": {"type": "boolean"},
-            "currentConditionsApplicable": {"type": "boolean"},
-            "decisionAt": {
-                "type": ["string", "null"], "format": "date-time",
-                "deprecated": True,
-            },
-            "decisionLabel": {
-                **nullable_string,
-                "deprecated": True,
-            },
-            "logisticsReferenceAt": {
-                "type": ["string", "null"], "format": "date-time"
-            },
-            "logisticsReferenceLabel": nullable_string,
-            "forecastIssuedAt": {
-                "type": ["string", "null"], "format": "date-time"
-            },
-            "forecastedLabel": nullable_string,
-            "recheck": {
-                **nullable_string,
-                "deprecated": True,
-                "description": (
-                    "Deprecated 1.x display alias of forecastedLabel; it no "
-                    "longer communicates a future action time."
-                ),
-            },
-            "confidence": nullable_string,
-            "particleForecast": ride_particle_schema,
-            "hazeOutlook": {
-                "type": "object",
-                "description": "Regional CAMS direction and simplified air-path context; never a TTDI concentration or smoke-source attribution.",
-                "required": ["available", "role", "usedForLocalPmPoint", "validatedAtTTDI"],
-                "properties": {
-                    "available": {"type": "boolean"},
-                    "role": {"const": "regional_model_outlook_not_local_concentration"},
-                    "usedForLocalPmPoint": {"const": False},
-                    "validatedAtTTDI": {"const": False},
-                    "sourceAttributionEstablished": {"const": False},
-                    "regionalMeanPm25UgM3": nullable_number,
-                    "regionalCurrentPm25UgM3": nullable_number,
-                    "regionalChangePct": nullable_number,
-                    "direction": nullable_string,
-                    "airPath": {"type": "object", "additionalProperties": True},
-                },
-                "additionalProperties": True,
-            },
-            "weatherForecast": {
-                "type": ["object", "null"],
-                "additionalProperties": True,
-            },
-            "observedHistory": {
-                "type": ["object", "null"],
-                "additionalProperties": True,
-            },
-            "historicalBaseline": {
-                "type": ["object", "null"],
-                "deprecated": True,
-                "description": "Deprecated 1.x alias of observedHistory.",
-                "additionalProperties": True,
-            },
-        },
-        "additionalProperties": True,
-    }
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "/api/v1/mtb/environment-evidence/schema",
-        "title": "Bukit Kiara MTB environmental evidence",
-        "description": (
-            "Live air-quality and weather evidence for an external consumer. "
-            "It does not select a ride window or contain a training prescription."
-        ),
-        "type": "object",
-        "required": [
-            "schemaVersion", "kind", "generatedAt", "evidenceId",
-            "contract", "boundary", "status", "links",
-        ],
-        "properties": {
-            "schemaVersion": {"const": RIDE_API_SCHEMA_VERSION},
-            "kind": {"const": "mtb_environment_evidence"},
-            "generatedAt": {"type": "string", "format": "date-time"},
-            "evidenceId": {"type": ["string", "null"]},
-            "contract": {
-                "type": "object",
-                "required": [
-                    "schemaVersion", "revision", "openapi", "jsonSchema",
-                    "documentation", "revisionRole", "evidencePollSeconds",
-                    "refreshPolicy",
-                ],
-                "properties": {
-                    "schemaVersion": {"const": RIDE_API_SCHEMA_VERSION},
-                    "revision": {
-                        "type": "string",
-                        "pattern": "^sha256:[0-9a-f]{16}$",
-                        "description": (
-                            "Opaque equality token for the schema, service "
-                            "description, and guide; "
-                            "never an evidence-freshness marker."
-                        ),
-                    },
-                    "openapi": {"const": "/api/openapi.json"},
-                    "jsonSchema": {
-                        "const": "/api/v1/mtb/environment-evidence/schema"
-                    },
-                    "documentation": {"const": "/docs/coach-api.md"},
-                    "revisionRole": {
-                        "const": "contract_and_documentation_only"
-                    },
-                    "evidencePollSeconds": {
-                        "type": "integer",
-                        "minimum": 60,
-                        "description": (
-                            "Recommended passive GET cadence; polling does not "
-                            "trigger source collection."
-                        ),
-                    },
-                    "refreshPolicy": {
-                        "type": "object",
-                        "required": [
-                            "mode", "useIfNoneMatch", "reloadWhen", "resources"
-                        ],
-                        "properties": {
-                            "mode": {"const": "conditional_get"},
-                            "useIfNoneMatch": {"const": True},
-                            "reloadWhen": {
-                                "type": "array",
-                                "items": {
-                                    "enum": ["schemaVersion", "revision"]
-                                },
-                            },
-                            "resources": {
-                                "type": "array",
-                                "description": (
-                                    "Only these advertised contract resources "
-                                    "support conditional GET."
-                                ),
-                                "items": {
-                                    "enum": [
-                                        "/api/openapi.json",
-                                        "/api/v1/mtb/environment-evidence/schema",
-                                        "/docs/coach-api.md"
-                                    ]
-                                },
-                            },
-                        },
-                        "additionalProperties": False,
-                    },
-                },
-                "additionalProperties": False,
-            },
-            "location": {"type": "object", "additionalProperties": True},
-            "logistics": {"type": "object", "additionalProperties": True},
-            "boundary": {
-                "type": "object",
-                "properties": {
-                    "role": {"const": "environmental_evidence"},
-                    "trainingPrescriptionIncluded": {"const": False},
-                    "historicalSeriesIncluded": {"const": False},
-                },
-                "additionalProperties": True,
-            },
-            "status": {
-                "type": "object",
-                "required": ["state", "usable", "fresh", "issues"],
-                "properties": {
-                    "state": {
-                        "type": "string",
-                        "enum": ["ok", "degraded", "unavailable"],
-                    },
-                    "usable": {"type": "boolean"},
-                    "fresh": {
-                        "type": "boolean",
-                        "description": "Sensor is within its freshness limit, the original forecast issue is at most 120 seconds old, and no analysis update error is active. Response generation time does not establish freshness.",
-                    },
-                    "forecastAgeSeconds": {
-                        "type": ["integer", "null"], "minimum": 0,
-                        "description": "Seconds since the original forecast issue, measured at response delivery; null while no forecast exists.",
-                    },
-                    "analysisUpdating": {"type": "boolean"},
-                    "message": {"type": "string"},
-                    "issues": {"type": "array", "items": issue_schema},
-                },
-                "additionalProperties": True,
-            },
-            "observation": {
-                "oneOf": [
-                    {"type": "null"},
-                    {
-                        "type": "object",
-                        "required": ["id", "timestamp", "ageSeconds", "particles"],
-                        "properties": {
-                            "id": {"type": "string"},
-                            "timestamp": {"type": "string", "format": "date-time"},
-                            "epoch": {"type": "integer"},
-                            "ageSeconds": {"type": "integer", "minimum": 0},
-                            "particles": {
-                                "type": "object",
-                                "properties": {
-                                    "pm25UgM3": nullable_number,
-                                    "pm10UgM3": nullable_number,
-                                },
-                                "additionalProperties": True,
-                            },
-                            "heat": {
-                                "type": "object",
-                                "properties": {
-                                    "heatIndexC": nullable_number,
-                                    "temperatureC": nullable_number,
-                                    "relativeHumidityPct": nullable_number,
-                                },
-                                "additionalProperties": True,
-                            },
-                        },
-                        "additionalProperties": True,
-                    },
-                ]
-            },
-            "particleNowcast": {
-                "type": "object",
-                "required": ["available"],
-                "properties": {
-                    "available": {"type": "boolean"},
-                    "role": {"const": "observed_recent_movement_not_future_direction"},
-                    "state": nullable_string,
-                    "label": nullable_string,
-                    "change30MinutesUgM3": nullable_number,
-                    "change60MinutesUgM3": nullable_number,
-                    "fastRise": {"type": "boolean"},
-                    "sustainedImprovement": {"type": "boolean"},
-                    "recheckMinutes": {"type": ["integer", "null"]},
-                },
-                "additionalProperties": True,
-            },
-            "exposureOutlook": {
-                "type": "object",
-                "properties": {
-                    "arrival": exposure_schema,
-                    "onTrail": exposure_schema,
-                    "experimentalRapidChangeRisk": rapid_change_schema,
-                    "shortHorizonChange": short_change_schema,
-                    "firstCrossingEventForecast": first_crossing_schema,
-                    "arrivalChangeForecast": {
-                        "type": "object", "required": ["available"],
-                        "description": "Learned exact +90 arrival changes relative to the issue's trailing five-minute sensor reference. Independent of the first-crossing forecast; all four tails remain visible.",
-                        "properties": {
-                            "available": {"type": "boolean"},
-                            "modelVersion": nullable_string,
-                            "forecastIssuedEpoch": nullable_number,
-                            "arrivalEpoch": nullable_number,
-                            "referencePm": nullable_number,
-                            "arrivalLeadMinutes": {"const": 90},
-                            "probabilityFall20": nullable_number,
-                            "probabilityFall40": nullable_number,
-                            "probabilityRise20": nullable_number,
-                            "probabilityRise40": nullable_number,
-                            "probabilityWithin20": nullable_number,
-                            "classProbabilities": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}},
-                            "performanceEvidence": {"type": "object", "additionalProperties": True},
-                        }, "additionalProperties": True,
-                    },
-                    "cyclingWindowForecast": cycling_window_json_schema(),
-                },
-                "additionalProperties": True,
-            },
-            "dataCoverage": {"type": "object", "additionalProperties": True},
-            "weather": {
-                "type": "object",
-                "required": ["available"],
-                "properties": {
-                    "available": {"type": "boolean"},
-                    "forecastSource": nullable_string,
-                    "forecastFetchedAt": {
-                        "type": ["string", "null"], "format": "date-time"
-                    },
-                    "forecastAgeMinutes": nullable_number,
-                    "trailPeriod": {
-                        "type": ["object", "null"],
-                        "additionalProperties": True,
-                    },
-                    "regionalTransport": {
-                        "type": "object",
-                        "required": [
-                            "available", "usedForParticleForecast", "current",
-                            "evidence",
-                        ],
-                        "properties": {
-                            "available": {"type": "boolean"},
-                            "state": nullable_string,
-                            "label": nullable_string,
-                            "reason": nullable_string,
-                            "usedForParticleForecast": {"const": False},
-                            "sourceBearingDegrees": nullable_number,
-                            "preRegisteredLagHours": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                            },
-                            "current": {
-                                "type": "object",
-                                "required": ["available"],
-                                "properties": {
-                                    "available": {"type": "boolean"},
-                                    "originAt": {
-                                        "type": ["string", "null"],
-                                        "format": "date-time",
-                                    },
-                                    "modeledWindSpeed925hPaKmh": nullable_number,
-                                    "modeledWindDirection925hPaDegrees": nullable_number,
-                                    "modeledWindDirection925hPa": nullable_string,
-                                    "sourceAlignment925hPa": nullable_number,
-                                    "sourceComponent925hPaKmh": nullable_number,
-                                },
-                                "additionalProperties": True,
-                            },
-                            "evidence": {
-                                "type": "object",
-                                "properties": {
-                                    "issuedForecastDays": {
-                                        "type": "integer", "minimum": 0
-                                    },
-                                    "issuedOriginHours": {
-                                        "type": "integer", "minimum": 0
-                                    },
-                                    "lowAlignment925hPaOrigins": {
-                                        "type": "integer", "minimum": 0
-                                    },
-                                    "validation": {
-                                        "type": "object",
-                                        "properties": {
-                                            "eligible": {"type": "boolean"},
-                                            "stableLagCount": {
-                                                "type": "integer", "minimum": 0
-                                            },
-                                            "requiredStableLags": {
-                                                "type": "integer", "minimum": 0
-                                            },
-                                            "reasons": {
-                                                "type": "array",
-                                                "items": {"type": "string"},
-                                            },
-                                        },
-                                        "additionalProperties": True,
-                                    },
-                                },
-                                "additionalProperties": True,
-                            },
-                        },
-                        "description": (
-                            "Causal, issued-forecast regional-wind evidence in "
-                            "shadow mode. It never alters PM2.5 forecasts."
-                        ),
-                        "additionalProperties": True,
-                    },
-                    "subangReference": {
-                        "type": "object",
-                        "required": ["role", "usedForParticleForecast"],
-                        "properties": {
-                            "role": {"const": "corroborating_context"},
-                            "usedForParticleForecast": {"const": False},
-                        },
-                        "description": (
-                            "Observed nearby weather context and provenance; "
-                            "not an input to PM2.5 point or range forecasts."
-                        ),
-                        "additionalProperties": True,
-                    },
-                },
-                "additionalProperties": True,
-            },
-            "clearanceEvent": {
-                "type": "object",
-                "required": ["detected"],
-                "properties": {
-                    "detected": {"type": "boolean"},
-                    "state": nullable_string,
-                    "kind": nullable_string,
-                    "label": nullable_string,
-                    "detectionMode": nullable_string,
-                    "eventConditionedForecast": {
-                        "type": ["object", "null"],
-                        "additionalProperties": True,
-                    },
-                },
-                "additionalProperties": True,
-            },
-            "rideWindows": {
-                "type": "object",
-                "properties": {
-                    "comparison": {
-                        "type": "object",
-                        "additionalProperties": True,
-                    },
-                    "morning": ride_window_schema,
-                    "afternoon": ride_window_schema,
-                },
-                "additionalProperties": True,
-            },
-            "evidenceQuality": {
-                "type": "object",
-                "properties": {
-                    "state": {"type": "string"},
-                    "limitations": {
-                        "type": "array",
-                        "items": {"type": "object", "additionalProperties": True},
-                    },
-                },
-                "additionalProperties": True,
-            },
-            "provenance": {
-                "type": "object",
-                "properties": {
-                    "analysisComputedAt": {"type": ["string", "null"], "format": "date-time"},
-                    "analysisForecastIssuedAt": {
-                        "type": ["string", "null"], "format": "date-time",
-                        "description": "Frozen calculation issue time. Forecast targets and analytical state retain this reference when a completed snapshot is delivered again.",
-                    },
-                    "analysisDelivery": {
-                        "type": "object",
-                        "description": "Live snapshot delivery status, separate from sensor/source clocks and model accuracy. Historical replay omits this field.",
-                        "properties": {
-                            "state": {"enum": ["ready", "updating", "initializing", "error", "expired"]},
-                            "updating": {"type": "boolean"},
-                            "forecastAgeSeconds": {"type": ["number", "null"], "minimum": 0},
-                            "servedAtEpoch": {"type": "integer"},
-                            "maximumAgeSeconds": {"const": 600},
-                            "retryAfterSeconds": {"type": ["number", "null"], "minimum": 0},
-                            "error": nullable_string,
-                            "diagnostics": {"enum": ["pending", "complete", "error", "skipped"]},
-                        },
-                        "additionalProperties": True,
-                    },
-                },
-                "additionalProperties": True,
-            },
-            "links": {
-                "type": "object",
-                "required": [
-                    "self", "openapi", "jsonSchema", "documentation"
-                ],
-                "properties": {
-                    "self": {"const": "/api/v1/mtb/environment-evidence"},
-                    "openapi": {"const": "/api/openapi.json"},
-                    "jsonSchema": {
-                        "const": "/api/v1/mtb/environment-evidence/schema"
-                    },
-                    "documentation": {"const": "/docs/coach-api.md"},
-                    "sourceCurrent": {"type": "string"},
-                    "sourceAnalysis": {"type": "string"},
-                },
-                "additionalProperties": True,
-            },
-        },
-        "allOf": [{
-            "if": {
-                "properties": {
-                    "status": {
-                        "properties": {
-                            "state": {"enum": ["ok", "degraded"]}
-                        },
-                        "required": ["state"],
-                    }
-                },
-                "required": ["status"],
-            },
-            "then": {
-                "required": [
-                    "location", "logistics", "observation", "particleNowcast",
-                    "exposureOutlook", "weather", "clearanceEvent",
-                    "rideWindows", "evidenceQuality", "provenance",
-                ],
-                "properties": {
-                    "observation": {"type": "object"},
-                    "exposureOutlook": {
-                        "required": ["arrival", "onTrail"]
-                    },
-                    "rideWindows": {
-                        "required": ["comparison", "morning", "afternoon"]
-                    },
-                },
-            },
-        }],
-        "additionalProperties": True,
-    }
-
-
-def canonical_json_bytes(value):
-    return json.dumps(
-        json_safe(value), ensure_ascii=False, allow_nan=False,
-        sort_keys=True, separators=(",", ":"),
-    ).encode("utf-8")
-
-
-def coach_api_contract_revision(document_bytes=None):
-    document_bytes = (
-        coach_api_document_bytes() if document_bytes is None else document_bytes
-    )
-    material = (
-        canonical_json_bytes(ride_evidence_json_schema())
-        + b"\0"
-        + document_bytes
-        + b"\0"
-        + canonical_json_bytes(_ride_api_openapi(None))
-    )
-    return "sha256:" + hashlib.sha256(material).hexdigest()[:16]
-
-
-def coach_api_contract_metadata(revision=None):
-    links = ride_api_links()
-    return {
-        "schemaVersion": RIDE_API_SCHEMA_VERSION,
-        "revision": revision or coach_api_contract_revision(),
-        "openapi": links["openapi"],
-        "jsonSchema": links["jsonSchema"],
-        "documentation": links["documentation"],
-        "revisionRole": "contract_and_documentation_only",
-        "evidencePollSeconds": POLL_SECONDS,
-        "refreshPolicy": {
-            "mode": "conditional_get",
-            "useIfNoneMatch": True,
-            "reloadWhen": ["schemaVersion", "revision"],
-            "resources": [
-                links["openapi"], links["jsonSchema"], links["documentation"]
-            ],
-        },
-    }
-
-
-def _ride_api_openapi(revision):
-    evidence_schema = ride_evidence_json_schema()
-    contract_headers = {
-        "ETag": {"$ref": "#/components/headers/ETag"},
-        "Cache-Control": {"$ref": "#/components/headers/CacheControl"},
-        "X-API-Schema-Version": {
-            "$ref": "#/components/headers/ApiSchemaVersion"
-        },
-        "X-Contract-Revision": {
-            "$ref": "#/components/headers/ContractRevision"
-        },
-    }
-    evidence_headers = {
-        "Link": {"$ref": "#/components/headers/DiscoveryLink"},
-        "Cache-Control": {
-            "$ref": "#/components/headers/EvidenceCacheControl"
-        },
-        "X-API-Schema-Version": {
-            "$ref": "#/components/headers/ApiSchemaVersion"
-        },
-        "X-Contract-Revision": {
-            "$ref": "#/components/headers/ContractRevision"
-        },
-    }
-    return {
-        "openapi": "3.1.0",
-        "info": {
-            "title": "Bukit Kiara MTB Environmental Evidence API",
-            "version": RIDE_API_SCHEMA_VERSION,
-            "description": (
-                "Read-only local air-quality and weather evidence. The service "
-                "does not select a ride window or issue a training prescription."
-            ),
-            "x-contract-revision": revision,
-        },
-        "servers": [{
-            "url": "/",
-            "description": "Resolve against the same dashboard host.",
-        }],
-        "paths": {
-            "/api/v1/mtb/environment-evidence": {
-                "get": {
-                    "operationId": "getMtbEnvironmentEvidence",
-                    "summary": "Get current ride-environment evidence",
-                    "description": (
-                        "Returns a fresh sensor observation, particle nowcast, "
-                        "90-minute-arrival and on-trail outlooks, neutral weather "
-                        "context, and a descriptive Morning/Afternoon comparison."
-                    ),
-                    "responses": {
-                        "200": {
-                            "description": "Current or degraded usable evidence.",
-                            "headers": evidence_headers,
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/MtbEnvironmentEvidence"
-                                    }
-                                }
-                            },
-                        },
-                        "503": {
-                            "description": "Current evidence is unavailable.",
-                            "headers": evidence_headers,
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/MtbEnvironmentEvidence"
-                                    }
-                                }
-                            },
-                        },
-                        "500": {
-                            "description": "Evidence generation failed.",
-                            "headers": evidence_headers,
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/MtbEnvironmentEvidence"
-                                    }
-                                }
-                            },
-                        },
-                    },
-                }
-            },
-            "/api/v1/mtb/environment-evidence/schema": {
-                "get": {
-                    "operationId": "getMtbEnvironmentEvidenceSchema",
-                    "summary": "Get the JSON Schema contract",
-                    "parameters": [{
-                        "$ref": "#/components/parameters/IfNoneMatch"
-                    }],
-                    "responses": {
-                        "200": {
-                            "description": "JSON Schema 2020-12 document.",
-                            "headers": contract_headers,
-                            "content": {
-                                "application/schema+json": {
-                                    "schema": {"type": "object"}
-                                }
-                            },
-                        },
-                        "304": {
-                            "description": "The cached schema is current.",
-                            "headers": contract_headers,
-                        },
-                    },
-                }
-            },
-            "/api/cycling-plan": {
-                "get": {
-                    "operationId": "recheckFixedCyclingWindow",
-                    "summary": "Recheck a tracked ride window against the personal 70 ug/m3 cutoff",
-                    "description": "Uses a cached model and current inputs for the original two-hour window. Call about 30 minutes after the initial forecast, with 55 to 65 minutes remaining before the ride starts. No fitting occurs in this request. This is a preparation aid, not a cycling clearance.",
-                    "parameters": [
-                        {"name": "startEpoch", "in": "query", "required": True,
-                         "schema": {"type": "integer"}},
-                        {"name": "endEpoch", "in": "query", "required": True,
-                         "schema": {"type": "integer"}},
-                    ],
-                    "responses": {
-                        "200": {"description": "Current probability or an explicit unavailable reason for the fixed window.",
-                                "content": {"application/json": {"schema": cycling_window_json_schema()}}},
-                        "400": {"description": "Missing or invalid window parameters."},
-                        "500": {"description": "Recheck could not be generated."},
-                    },
-                }
-            },
-            "/api/openapi.json": {
-                "get": {
-                    "operationId": "getOpenApiDocument",
-                    "summary": "Get the OpenAPI service description",
-                    "parameters": [{
-                        "$ref": "#/components/parameters/IfNoneMatch"
-                    }],
-                    "responses": {
-                        "200": {
-                            "description": "OpenAPI 3.1 service description.",
-                            "headers": contract_headers,
-                            "content": {
-                                "application/vnd.oai.openapi+json": {
-                                    "schema": {"type": "object"}
-                                }
-                            },
-                        },
-                        "304": {
-                            "description": "The cached description is current.",
-                            "headers": contract_headers,
-                        },
-                    },
-                }
-            },
-            "/docs/coach-api.md": {
-                "get": {
-                    "operationId": "getCoachApiGuide",
-                    "summary": "Get the living environmental integration guide",
-                    "parameters": [{
-                        "$ref": "#/components/parameters/IfNoneMatch"
-                    }],
-                    "responses": {
-                        "200": {
-                            "description": "Markdown integration guide.",
-                            "headers": contract_headers,
-                            "content": {
-                                "text/markdown": {
-                                    "schema": {"type": "string"}
-                                }
-                            },
-                        },
-                        "304": {
-                            "description": "The cached guide is current.",
-                            "headers": contract_headers,
-                        },
-                    },
-                }
-            },
-        },
-        "components": {
-            "schemas": {"MtbEnvironmentEvidence": evidence_schema},
-            "parameters": {
-                "IfNoneMatch": {
-                    "name": "If-None-Match",
-                    "in": "header",
-                    "required": False,
-                    "description": "ETag previously returned for this resource.",
-                    "schema": {"type": "string"},
-                }
-            },
-            "headers": {
-                "ETag": {
-                    "description": "Strong validator for the exact response bytes.",
-                    "schema": {"type": "string"},
-                },
-                "CacheControl": {
-                    "description": "Contract resources may be stored but revalidated.",
-                    "schema": {"type": "string", "example": "no-cache"},
-                },
-                "EvidenceCacheControl": {
-                    "description": "Dynamic evidence must not be stored.",
-                    "schema": {
-                        "type": "string",
-                        "example": "no-store, no-cache, must-revalidate",
-                    },
-                },
-                "ApiSchemaVersion": {
-                    "description": "Evidence schema version.",
-                    "schema": {"type": "string"},
-                },
-                "ContractRevision": {
-                    "description": "Opaque contract-resource equality token.",
-                    "schema": {"type": "string"},
-                },
-                "DiscoveryLink": {
-                    "description": (
-                        "Links to OpenAPI, JSON Schema, and the guide."
-                    ),
-                    "schema": {"type": "string"},
-                },
-            },
-        },
-    }
-
-
-def ride_api_openapi(revision=None):
-    return _ride_api_openapi(revision or coach_api_contract_revision())
-
-
-def representation_etag(payload):
-    return '"sha256-' + hashlib.sha256(payload).hexdigest()[:32] + '"'
-
-
-def if_none_match_matches(header_value, etag):
-    if not header_value:
-        return False
-    candidates = {part.strip() for part in header_value.split(",")}
-    return "*" in candidates or etag in candidates or f"W/{etag}" in candidates
-
-
-def ride_conditions_api(days=RIDE_API_ANALYSIS_DAYS, now_epoch=None):
-    """Return compact, non-prescriptive air-quality and weather evidence."""
-    generated_epoch = int(time.time() if now_epoch is None else now_epoch)
-    days = max(1.0, min(float(days), 30.0))
-    result = analysis(
-        days, as_of_epoch=generated_epoch if now_epoch is not None else None
-    )
-    forecast_epoch = result.get("forecastIssuedEpoch")
-    delivery = copy.deepcopy(result.get("delivery") or {}) if now_epoch is None else {}
-    forecast_age_seconds = (
-        max(0, generated_epoch - int(forecast_epoch))
-        if forecast_epoch is not None else
-        max(0, int(delivery["forecastAgeSeconds"]))
-        if delivery.get("forecastAgeSeconds") is not None else None
-    )
-    if delivery:
-        # Response clocks describe delivery, never a new forecast calculation.
-        delivery["forecastAgeSeconds"] = forecast_age_seconds
-        delivery["servedAtEpoch"] = generated_epoch
-    forecast_expired = now_epoch is None and (
-        delivery.get("state") == "expired"
-        or (forecast_age_seconds is not None and forecast_age_seconds > 600)
-    )
-    if delivery and forecast_expired:
-        delivery["state"] = "expired"
-    analysis_provenance = {
-        "analysisDaysRequested": days,
-        "analysisComputedAt": (result.get("computation") or {}).get("completedAt"),
-        "analysisForecastIssuedAt": iso_from_epoch(forecast_epoch),
-    }
-    if delivery:
-        analysis_provenance["analysisDelivery"] = delivery
-    current_epoch = (result.get("current") or {}).get("epoch")
-    with db() as conn:
-        reading = rowdict(conn.execute(
-            "SELECT * FROM readings WHERE epoch=?", (current_epoch,)
-        ).fetchone()) if current_epoch is not None else None
-    # Runtime collector errors have no historical timestamp.  They are valid
-    # live service-health evidence, but including today's process state in an
-    # `now_epoch` replay would make the same historical request change later.
-    collector = {}
-    air_quality_error = None
-    if now_epoch is None:
-        with status_lock:
-            collector = dict(collector_status)
-        with weather_lock:
-            air_quality_error = weather_status.get("air_quality_error")
-    air_quality_payload = (
-        latest_air_quality_payload(int(forecast_epoch))
-        if forecast_epoch is not None else None
-    )
-
-    base = {
-        "schemaVersion": RIDE_API_SCHEMA_VERSION,
-        "kind": "mtb_environment_evidence",
-        "generatedAt": iso_from_epoch(generated_epoch),
-        "evidenceId": (
-            f'airgradient-{LOCATION_ID}-{int(current_epoch)}-v2'
-            if current_epoch is not None else None
-        ),
-        "contract": coach_api_contract_metadata(),
-        "links": ride_api_links(),
-        "location": {
-            "name": "Bukit Kiara / Taman Tun Dr Ismail",
-            "latitude": WEATHER_LATITUDE,
-            "longitude": WEATHER_LONGITUDE,
-            "timezone": "Asia/Kuala_Lumpur",
-        },
-        "logistics": {
-            "decisionToTrailMinutes": ARRIVAL_MINUTES,
-            "typicalTrailDurationMinutes": {"minimum": 90, "maximum": TRAIL_MINUTES},
-            "modeledTrailDurationMinutes": TRAIL_MINUTES,
-            "modeledExposureWindowMinutes": {
-                "start": ARRIVAL_MINUTES,
-                "end": ARRIVAL_MINUTES + TRAIL_MINUTES,
-            },
-        },
-        "boundary": {
-            "role": "environmental_evidence",
-            "trainingPrescriptionIncluded": False,
-            "historicalSeriesIncluded": False,
-        },
-    }
-
-    if (not reading or not result.get("available")
-            or reading.get("pm02") is None or forecast_expired):
-        unavailable_code = (
-            "analysis_expired" if forecast_expired else
-            "analysis_initializing" if delivery.get("state") == "initializing" else
-            "analysis_unavailable" if not result.get("available") else
-            "current_reading_unavailable"
-        )
-        base.update({
-            "status": {
-                "state": "unavailable", "usable": False, "fresh": False,
-                "message": "Current environmental evidence is unavailable.",
-                "issues": [{"code": unavailable_code, "severity": "error"}],
-                "forecastAgeSeconds": forecast_age_seconds,
-                "analysisUpdating": bool(delivery.get("updating")),
-            },
-            "observation": None,
-            "particleNowcast": {"available": False},
-            "exposureOutlook": {
-                "arrival": {"available": False}, "onTrail": {"available": False},
-                "experimentalRapidChangeRisk": {"available": False},
-                "shortHorizonChange": {"available": False},
-                "firstCrossingEventForecast": {"available": False},
-                "arrivalChangeForecast": {"available": False},
-                "cyclingWindowForecast": {"available": False},
-            },
-            "weather": {"available": False},
-            "clearanceEvent": {"detected": False},
-            "rideWindows": {},
-            "evidenceQuality": {
-                "state": "unavailable",
-                "limitations": [{"code": "analysis_unavailable"}],
-            },
-            "provenance": {
-                "sensor": {"provider": "AirGradient", "locationId": LOCATION_ID},
-                **analysis_provenance,
-            },
-        })
-        return base
-
-    reading_epoch = int(reading["epoch"])
-    age_seconds = max(0, generated_epoch - reading_epoch)
-    operational_issues = []
-    if now_epoch is None and forecast_age_seconds is not None and forecast_age_seconds > 120:
-        operational_issues.append({
-            "code": "analysis_stale", "severity": "warning",
-            "message": f'The last completed forecast was issued {forecast_age_seconds} seconds ago; its targets retain that issue time.',
-        })
-    if delivery.get("error"):
-        operational_issues.append({
-            "code": "analysis_update_error", "severity": "warning",
-            "message": "The latest analysis update failed; the last completed forecast is being served.",
-        })
-    if age_seconds > SENSOR_UNAVAILABLE_SECONDS:
-        operational_issues.append({
-            "code": "sensor_unavailable", "severity": "error",
-            "message": f'Latest reading is {age_seconds // 60} minutes old.',
-        })
-    elif age_seconds > SENSOR_DEGRADED_SECONDS:
-        operational_issues.append({
-            "code": "sensor_stale", "severity": "warning",
-            "message": f'Latest reading is {age_seconds // 60} minutes old.',
-        })
-    if collector.get("error"):
-        operational_issues.append({
-            "code": "sensor_collector_error", "severity": "warning",
-            "message": str(collector["error"]),
-        })
-
-    air_window = result.get("airWindow") or {}
-    arrival = air_window.get("arrival") or {}
-    trail = air_window.get("trail") or {}
-    weather = result.get("weather") or {}
-    weather_age_minutes = (
-        max(0, round((generated_epoch - int(weather["fetchedEpoch"])) / 60))
-        if weather.get("fetchedEpoch") is not None else weather.get("ageMinutes")
-    )
-    weather_evidence = weather.get("evidence") or {}
-    if not weather.get("available"):
-        operational_issues.append({
-            "code": "weather_unavailable", "severity": "warning",
-            "message": weather.get("message") or "Weather evidence is unavailable.",
-        })
-    elif (weather_age_minutes is not None
-          and weather_age_minutes * 60 > WEATHER_DEGRADED_SECONDS):
-        operational_issues.append({
-            "code": "weather_forecast_stale", "severity": "warning",
-            "message": f'Weather forecast is {weather_age_minutes} minutes old.',
-        })
-
-    if any(issue["severity"] == "error" for issue in operational_issues):
-        service_state = "unavailable"
-    elif operational_issues:
-        service_state = "degraded"
-    else:
-        service_state = "ok"
-    service_message = {
-        "ok": "Environmental evidence is current.",
-        "degraded": "Environmental evidence is partially degraded; inspect status issues.",
-        "unavailable": "Environmental evidence is too stale or incomplete for a current assessment.",
-    }[service_state]
-
-    limitations = []
-    if not arrival.get("available"):
-        limitations.append({
-            "code": "arrival_outlook_collecting",
-            "message": "The 90-minute arrival outlook is not yet available.",
-        })
-    elif str(arrival.get("confidence", "")).lower().startswith("low"):
-        limitations.append({
-            "code": "arrival_outlook_low_confidence",
-            "message": str(arrival.get("confidence")),
-        })
-    if not trail.get("available"):
-        limitations.append({
-            "code": "trail_outlook_collecting",
-            "message": "The on-trail exposure outlook is not yet available.",
-        })
-    elif str(trail.get("confidence", "")).lower().startswith("low"):
-        limitations.append({
-            "code": "trail_outlook_low_confidence",
-            "message": str(trail.get("confidence")),
-        })
-    if not weather_evidence.get("supported"):
-        limitations.append({
-            "code": "weather_particle_link_unvalidated",
-            "message": "The session model learns weather associations from issued forecasts. Rain probability is not PM washout probability, and forecast rain can miss the local sensor. Specific weather–PM causal links remain unvalidated.",
-        })
-    comparison = result.get("comparison") or {}
-    if not comparison.get("ready"):
-        comparison_reason = (
-            comparison.get("summary") or "The two window outlooks are still collecting."
-        )
-        limitations.append({
-            "code": (
-                "morning_afternoon_different_dates"
-                if "different dates" in str(comparison_reason).lower()
-                else "morning_afternoon_forecast_collecting"
-            ),
-            "message": comparison_reason,
-        })
-    ride_forecast = result.get("rideForecast") or {}
-    issued_particle = ride_forecast.get("issuedEvidence") or {}
-    if result.get("windowPrediction"):
-        limitations.append({
-            "code": "local_session_pm_model_experimental",
-            "message": "Morning displays the fixed HGB output and Afternoon the fixed PatchTST output, without deadband, baseline substitution or alternate-model selection. Performance and extrapolation metadata do not change the number. Missing model outputs are unavailable; issued accuracy is collecting.",
-        })
-        trial_metadata = result["windowPrediction"].get("regionalCorrectionTrial")
-        if trial_metadata:
-            limitations.append({
-                "code": "cams_local_correction_trial_not_applied",
-                "message": (
-                    "The optional live CAMS plus local correction trial is paused; no trial point was calculated for this issue."
-                    if trial_metadata.get("status") == "suspended_live_diagnostics" else
-                    "The separate CAMS plus learned local correction trial did not beat the current model overall in development replay. It is not applied to the primary forecasts or session comparison."
-                ),
-            })
-    elif not issued_particle.get("supported"):
-        limitations.append({
-            "code": "ride_window_particle_model_experimental",
-            "message": (
-                f'{issued_particle.get("scoredWindowCount", 0)} issued CAMS ride windows '
-                "scored; aggressive CAMS centres are experimental and not validated."
-            ),
-        })
-    elif not ride_forecast.get("usedForComparison"):
-        limitations.append({
-            "code": "ride_window_particle_model_not_applicable",
-            "message": (
-                "The PM model is validated but is not applied outside its tested "
-                "decision lead and exact modeled session."
-            ),
-        })
-    if air_quality_payload is None:
-        limitations.append({
-            "code": "cams_particle_forecast_unavailable",
-            "message": str(air_quality_error or "The CAMS candidate is unavailable."),
-        })
-    elif (generated_epoch - int(air_quality_payload.get("fetchedEpoch") or 0)
-          > AIR_QUALITY_DEGRADED_SECONDS):
-        limitations.append({
-            "code": "cams_particle_forecast_stale",
-            "message": "The CAMS candidate is stale; persistence remains available.",
-        })
-    elif air_quality_error:
-        limitations.append({
-            "code": "cams_refresh_failed_using_cached_forecast",
-            "message": "The latest CAMS refresh failed; the previously issued forecast remains available.",
-        })
-
-    particle_mix = air_window.get("particleMix") or {}
-    mix_signal = None
-    if particle_mix.get("relevant"):
-        mix_signal = {
-            "state": particle_mix.get("state"),
-            "label": particle_mix.get("label"),
-            "fineSharePct": particle_mix.get("fineShare"),
-            "coarseParticlesUgM3": particle_mix.get("coarseParticles"),
-        }
-
-    shower = result.get("showerSignal") or {}
-    timeline = shower.get("timeline") or {}
-    shower_metrics = shower.get("metrics") or {}
-    rapid_event = (result.get("shadowForecast") or {}).get(
-        "rapidClearanceEvent"
-    ) or {}
-    event_detected = shower.get("state") in ("active", "recent", "forming")
-    clearance_event = {
-        "detected": event_detected,
-        "state": shower.get("state"),
-        "kind": shower.get("kind"),
-        "label": shower.get("label"),
-        "ageMinutes": shower.get("ageMinutes"),
-        "lastEvidenceAt": iso_from_epoch(shower.get("lastEvidenceEpoch")),
-        "detectionMode": shower_metrics.get("detectionMode"),
-        "rainSupport": bool(shower.get("rainSupport")),
-        "dryAirMassSupport": bool(shower.get("dryAirMassSupport")),
-        "eventConditionedForecast": {
-            "available": bool(rapid_event.get("available")),
-            "status": rapid_event.get("status"),
-            "completedPriorEvents": rapid_event.get("completedEventCount"),
-            "completedPriorDistinctDays": rapid_event.get("completedDistinctDays"),
-            "minimumPriorEvents": rapid_event.get("minimumCompletedEvents"),
-            "minimumPriorDistinctDays": rapid_event.get("minimumDistinctDays"),
-            "eventAt": iso_from_epoch(rapid_event.get("eventEpoch")),
-            "eventAgeMinutes": rapid_event.get("eventAgeMinutes"),
-            "deltaWeight": rapid_event.get("deltaWeight"),
-            "normalization": rapid_event.get("normalization"),
-            "arrivalRatio": rapid_event.get("arrivalRatio"),
-            "trailMeanRatio": rapid_event.get("trailMeanRatio"),
-            "trailPeakRatio": rapid_event.get("trailPeakRatio"),
-            "experimental": True,
-        },
-    }
-    if event_detected:
-        clearance_event["timeline"] = {
-            "onsetAt": iso_from_epoch(timeline.get("onsetEpoch")),
-            "confirmedAt": iso_from_epoch(timeline.get("confirmationEpoch")),
-            "lowestAt": iso_from_epoch(timeline.get("lowEpoch")),
-            "lowestPm25UgM3": timeline.get("lowPm25"),
-            "reboundAt": iso_from_epoch(timeline.get("reboundEpoch")),
-        }
-
-    window_payloads = {}
-    for key in ("morning", "afternoon"):
-        window = (result.get("windows") or {}).get(key) or {}
-        observed_history = compact_window_baseline(window.get("baseline"))
-        window_payloads[key] = {
-            "targetDay": window.get("targetLabel"),
-            "startAt": iso_from_epoch(window.get("startEpoch")),
-            "endAt": iso_from_epoch(window.get("endEpoch")),
-            "rideWindow": window.get("rideLabel"),
-            "modeledSession": window.get("modeledSessionLabel"),
-            "leadHours": window.get("leadHours"),
-            "active": bool(window.get("active")),
-            "currentConditionsApplicable": bool(window.get("currentApplicable")),
-            "logisticsReferenceAt": iso_from_epoch(window.get("decisionEpoch")),
-            "logisticsReferenceLabel": window.get("decisionLabel"),
-            # Deprecated 1.x aliases; use logisticsReferenceAt/Label.
-            "decisionAt": iso_from_epoch(window.get("decisionEpoch")),
-            "decisionLabel": window.get("decisionLabel"),
-            "forecastIssuedAt": iso_from_epoch(window.get("forecastIssuedEpoch")),
-            "forecastedLabel": window.get("forecastedLabel"),
-            # Deprecated 1.x display alias retained without delay wording.
-            "recheck": window.get("forecastedLabel"),
-            "confidence": window.get("confidence"),
-            "particleForecast": compact_window_particle_forecast(
-                window.get("particleForecast")
-            ),
-            "observedHistory": observed_history,
-            # Deprecated 1.x alias retained for the existing coach parser.
-            "historicalBaseline": observed_history,
-            "weatherForecast": compact_weather_window(window.get("weatherForecast")),
-            "hazeOutlook": {
-                "available": False,
-                "role": "regional_model_outlook_not_local_concentration",
-                "usedForLocalPmPoint": False,
-                "validatedAtTTDI": False,
-                "sourceAttributionEstablished": False,
-                **(window.get("hazeOutlook") or {}),
-                "airPath": {key: value for key, value in
-                            ((window.get("hazeOutlook") or {}).get("airPath") or {}).items()
-                            if key != "paths"},
-            },
-        }
-
-    subang = weather.get("subang") or {}
-    subang_age_minutes = (
-        max(0, round((generated_epoch - int(subang["report_epoch"])) / 60))
-        if subang.get("report_epoch") is not None else subang.get("ageMinutes")
-    )
-    trail_weather = compact_weather_window(weather.get("trail"))
-    regional_transport = compact_regional_transport(weather.get("transport"))
-    base.update({
-        "status": {
-            "state": service_state,
-            "usable": service_state != "unavailable",
-            "fresh": (age_seconds <= SENSOR_DEGRADED_SECONDS
-                      and (forecast_age_seconds is None or forecast_age_seconds <= 120)
-                      and not delivery.get("error")),
-            "forecastAgeSeconds": forecast_age_seconds,
-            "analysisUpdating": bool(delivery.get("updating")),
-            "message": service_message,
-            "issues": operational_issues,
-        },
-        "observation": {
-            "id": f'airgradient-{LOCATION_ID}-{reading_epoch}',
-            "timestamp": reading.get("timestamp") or iso_from_epoch(reading_epoch),
-            "epoch": reading_epoch,
-            "ageSeconds": age_seconds,
-            "particles": {
-                "pm25UgM3": reading.get("pm02"),
-                "pm10UgM3": reading.get("pm10"),
-            },
-            "heat": {
-                "heatIndexC": reading.get("heatindex"),
-                "temperatureC": reading.get("atmp"),
-                "relativeHumidityPct": reading.get("rhum"),
-            },
-        },
-        "dataCoverage": result.get("dataCoverage") or {},
-        "particleNowcast": {
-            "available": bool(air_window.get("available")),
-            "role": "observed_recent_movement_not_future_direction",
-            "state": air_window.get("state"),
-            "label": (air_window.get("observedMovement") or {}).get("label", air_window.get("label")),
-            "change30MinutesUgM3": air_window.get("change30"),
-            "change60MinutesUgM3": air_window.get("change60"),
-            "fastRise": bool(air_window.get("fastRise")),
-            "sustainedImprovement": bool(
-                air_window.get("sustainedImprovement")
-            ),
-            "minimumSinceEventUgM3": air_window.get("minimumSinceEvent"),
-            "recheckMinutes": air_window.get("recheckMinutes"),
-            "analysisBucketEndAt": iso_from_epoch(
-                air_window.get("analysisBucketEndEpoch")
-            ),
-            "analysisBucketMinutes": air_window.get("analysisBucketMinutes"),
-            "particleMixSignal": mix_signal,
-        },
-        "exposureOutlook": {
-            "experimentalRapidChangeRisk": air_window.get("experimentalRapidChangeRisk") or {"available": False},
-            "shortHorizonChange": air_window.get("shortHorizonChange") or {"available": False},
-            "firstCrossingEventForecast": air_window.get("firstCrossingEventForecast") or {"available": False},
-            "arrivalChangeForecast": air_window.get("arrivalChangeForecast") or {"available": False},
-            "cyclingWindowForecast": air_window.get("cyclingWindowForecast") or {"available": False},
-            "arrival": {
-                "available": bool(arrival.get("available")),
-                "freshnessAdjustment": arrival.get("freshnessAdjustment") or {},
-                "rainModel": arrival.get("rainModel") or {},
-                "modelEvidence": arrival.get("modelEvidence") or {},
-                "offsetMinutes": arrival.get("minutes", ARRIVAL_MINUTES),
-                "expectedAt": iso_from_epoch(arrival.get("expectedEpoch")),
-                "forecastIssuedAt": iso_from_epoch(arrival.get("forecastIssuedEpoch")),
-                "targetVersion": (arrival.get("forecastClock") or {}).get("targetVersion"),
-                "targetDefinition": (arrival.get("forecastClock") or {}).get("arrivalTargetDefinition"),
-                "basedOnObservedAt": reading.get("timestamp") or iso_from_epoch(reading_epoch),
-                "headline": arrival.get("headline"),
-                "persistenceAnchorPm25UgM3": (
-                    arrival.get("baselinePoint")
-                    if arrival.get("baselinePoint") is not None else arrival.get("point")
-                ),
-                "persistenceAnchorRole": arrival.get(
-                    "persistenceAnchorRole", "latest_closed_15_minute_bucket_median"
-                ),
-                "persistenceAnchorAt": iso_from_epoch(
-                    arrival.get("persistenceAnchorEpoch")
-                ),
-                "modelFeatureAnchorPm25UgM3": arrival.get("modelFeatureAnchor"),
-                "modelVersion": arrival.get("modelVersion"),
-                "modelOutput": arrival.get("modelOutput") or {},
-                "performanceEvidence": arrival.get("performanceEvidence") or {},
-                "projectedPm25UgM3": arrival.get("point"),
-                # Deprecated 1.x alias now retains its literal baseline meaning.
-                "baselinePm25UgM3": (
-                    arrival.get("baselinePoint")
-                    if arrival.get("baselinePoint") is not None else arrival.get("point")
-                ),
-                "pointRole": arrival.get("pointRole"),
-                "forecastState": arrival.get("forecastState"),
-                "approximate": bool(arrival.get("pointApproximate")),
-                "validationState": (
-                    "validated" if arrival.get("validated") else
-                    "experimental_not_validated"
-                    if arrival.get("pointApproximate")
-                    else "persistence_only"
-                ),
-                "likelyRangePm25UgM3": {
-                    "low": arrival.get("rawRangeLow"),
-                    "high": arrival.get("rawRangeHigh"),
-                    "quantiles": [0.10, 0.90], "calibrated": False,
-                },
-                "forecastRangePm25UgM3": {
-                    "low": arrival.get("rangeLow"),
-                    "high": arrival.get("rangeHigh"),
-                    "containsPersistenceAnchor": True,
-                    "containsExperimentalProjection": bool(arrival.get("pointApproximate")),
-                    "role": arrival.get("rangeRole") or "anchor_containing_display_envelope",
-                    "coverageClaimed": False,
-                },
-                # Deprecated 1.x alias; use forecastRangePm25UgM3.
-                "decisionEnvelopePm25UgM3": {
-                    "low": arrival.get("rangeLow"),
-                    "high": arrival.get("rangeHigh"),
-                    "containsBaseline": True,
-                    "containsExperimentalProjection": bool(arrival.get("pointApproximate")),
-                    "role": arrival.get("rangeRole") or "persistence_error_envelope",
-                    "coverageClaimed": False,
-                },
-                "upperPm25UgM3": {
-                    "value": (
-                        arrival.get("rawUpper90")
-                        if arrival.get("rawUpper90") is not None
-                        else arrival.get("rawRangeHigh")
-                    ),
-                    "quantile": 0.90,
-                    "finiteSampleRank": bool(arrival.get("finiteSampleUpper")),
-                    "finiteSampleRankCoverage": arrival.get("finiteSampleRankCoverage"),
-                    "calibrated": False,
-                    "role": arrival.get("upperQuantileRole") or "uncalibrated_empirical_persistence_error_quantile",
-                },
-                "forecastUpperPm25UgM3": (
-                    arrival.get("decisionUpper")
-                    if arrival.get("decisionUpper") is not None
-                    else arrival.get("upper90")
-                ),
-                # Deprecated 1.x alias; use forecastUpperPm25UgM3.
-                "decisionUpperPm25UgM3": (
-                    arrival.get("decisionUpper")
-                    if arrival.get("decisionUpper") is not None
-                    else arrival.get("upper90")
-                ),
-                "confidence": confidence_code(arrival.get("confidence")),
-                "confidenceDetail": arrival.get("confidence"),
-                "methodId": exposure_method_id(arrival.get("method")),
-                "rapidClearanceEventSupport": arrival.get("rapidEventSupport"),
-                "support": {
-                    "originCount": arrival.get("originCount"),
-                    "independentOriginCount": arrival.get("independentOriginCount"),
-                    "matchedCount": arrival.get("matchedCount"),
-                    "matchedIndependentOriginCount": arrival.get(
-                        "matchedIndependentOriginCount"
-                    ),
-                    "matchedDistinctDays": arrival.get("matchedDistinctDays"),
-                    "distinctDays": arrival.get("distinctDays"),
-                    "minimumRequired": arrival.get("minimumRequired"),
-                },
-            },
-            "onTrail": {
-                "available": bool(trail.get("available")),
-                "freshnessAdjustment": trail.get("freshnessAdjustment") or {},
-                "rainModel": trail.get("rainModel") or {},
-                "modelEvidence": trail.get("modelEvidence") or {},
-                "startOffsetMinutes": trail.get("startMinutes", ARRIVAL_MINUTES),
-                "endOffsetMinutes": trail.get("endMinutes", ARRIVAL_MINUTES + TRAIL_MINUTES),
-                "startAt": iso_from_epoch(trail.get("startEpoch")),
-                "endAt": iso_from_epoch(trail.get("endEpoch")),
-                "forecastIssuedAt": iso_from_epoch(trail.get("forecastIssuedEpoch")),
-                "targetVersion": (trail.get("forecastClock") or {}).get("targetVersion"),
-                "meanTargetDefinition": (trail.get("forecastClock") or {}).get("windowMeanTargetDefinition"),
-                "peakTargetDefinition": (trail.get("forecastClock") or {}).get("windowPeakTargetDefinition"),
-                "basedOnObservedAt": reading.get("timestamp") or iso_from_epoch(reading_epoch),
-                "headline": trail.get("headline"),
-                "persistenceAnchorPm25UgM3": (
-                    trail.get("baselinePoint")
-                    if trail.get("baselinePoint") is not None else trail.get("point")
-                ),
-                "persistenceAnchorRole": trail.get(
-                    "persistenceAnchorRole", "latest_closed_15_minute_bucket_median"
-                ),
-                "persistenceAnchorAt": iso_from_epoch(
-                    trail.get("persistenceAnchorEpoch")
-                ),
-                "modelFeatureAnchorPm25UgM3": trail.get("modelFeatureAnchor"),
-                "modelVersion": trail.get("modelVersion"),
-                "modelOutput": trail.get("modelOutput") or {},
-                "performanceEvidence": trail.get("performanceEvidence") or {},
-                "projectedMeanPm25UgM3": trail.get("point"),
-                "rideMinimumMaximumPm25UgM3": trail.get("rideExtrema") or {"available": False},
-                "projectedPeakPm25UgM3": trail.get("projectedPeak"),
-                # Deprecated 1.x alias now retains its literal baseline meaning.
-                "baselineMeanPm25UgM3": (
-                    trail.get("baselinePoint")
-                    if trail.get("baselinePoint") is not None else trail.get("point")
-                ),
-                "pointRole": trail.get("pointRole"),
-                "forecastState": trail.get("forecastState"),
-                "approximate": bool(trail.get("pointApproximate")),
-                "validationState": (
-                    "validated" if trail.get("validated") else
-                    "mixed_persistence_mean_experimental_peak"
-                    if (trail.get("peakApproximate") and not trail.get("pointApproximate")) else
-                    "experimental_not_validated"
-                    if trail.get("pointApproximate")
-                    else "persistence_only"
-                ),
-                "meanValidationState": (
-                    "validated" if trail.get("validated") else
-                    "experimental_not_validated" if trail.get("pointApproximate")
-                    else "persistence_only"
-                ),
-                "peakValidationState": (
-                    "validated" if trail.get("validated") else
-                    "experimental_not_validated" if trail.get("peakApproximate")
-                    else "persistence_only"
-                ),
-                "likelyMeanRangePm25UgM3": {
-                    "low": trail.get("rawRangeLow"),
-                    "high": trail.get("rawRangeHigh"),
-                    "quantiles": [0.10, 0.90], "calibrated": False,
-                },
-                "forecastMeanRangePm25UgM3": {
-                    "low": trail.get("rangeLow"),
-                    "high": trail.get("rangeHigh"),
-                    "containsPersistenceAnchor": True,
-                    "containsExperimentalProjection": bool(trail.get("pointApproximate")),
-                    "role": trail.get("rangeRole") or "anchor_containing_display_envelope",
-                    "coverageClaimed": False,
-                },
-                # Deprecated 1.x alias; use forecastMeanRangePm25UgM3.
-                "decisionMeanEnvelopePm25UgM3": {
-                    "low": trail.get("rangeLow"),
-                    "high": trail.get("rangeHigh"),
-                    "containsBaseline": True,
-                    "containsExperimentalProjection": bool(trail.get("pointApproximate")),
-                    "role": trail.get("rangeRole") or "persistence_error_envelope",
-                    "coverageClaimed": False,
-                },
-                "upperMeanPm25UgM3": {
-                    "value": (
-                        trail.get("rawUpperMean90")
-                        if trail.get("rawUpperMean90") is not None
-                        else trail.get("rawRangeHigh")
-                    ),
-                    "quantile": 0.90,
-                    "finiteSampleRank": bool(trail.get("finiteSampleUpper")),
-                    "finiteSampleRankCoverage": trail.get("finiteSampleRankCoverage"),
-                    "calibrated": False,
-                    "role": trail.get("upperQuantileRole") or "uncalibrated_empirical_persistence_error_quantile",
-                },
-                "upperPeakPm25UgM3": {
-                    "value": trail.get("rawPeakUpper90"),
-                    "quantile": 0.90,
-                    "finiteSampleRank": bool(trail.get("finiteSampleUpper")),
-                    "finiteSampleRankCoverage": trail.get("finiteSampleRankCoverage"),
-                    "calibrated": False,
-                    "role": "uncalibrated_empirical_persistence_error_quantile",
-                },
-                "forecastPeakUpperPm25UgM3": (
-                    trail.get("decisionPeakUpper")
-                    if trail.get("decisionPeakUpper") is not None
-                    else trail.get("peakUpper")
-                ),
-                # Deprecated 1.x alias; use forecastPeakUpperPm25UgM3.
-                "decisionPeakRiskMarkerPm25UgM3": (
-                    trail.get("decisionPeakUpper")
-                    if trail.get("decisionPeakUpper") is not None
-                    else trail.get("peakUpper")
-                ),
-                "confidence": confidence_code(trail.get("confidence")),
-                "confidenceDetail": trail.get("confidence"),
-                "methodId": exposure_method_id(trail.get("method")),
-                "rapidClearanceEventSupport": trail.get("rapidEventSupport"),
-                "support": {
-                    "originCount": trail.get("originCount"),
-                    "independentOriginCount": trail.get("independentOriginCount"),
-                    "matchedCount": trail.get("matchedCount"),
-                    "matchedIndependentOriginCount": trail.get(
-                        "matchedIndependentOriginCount"
-                    ),
-                    "matchedDistinctDays": trail.get("matchedDistinctDays"),
-                    "matchedEventCount": trail.get("matchedEventCount"),
-                    "distinctDays": trail.get("distinctDays"),
-                    "minimumRequired": trail.get("minimumRequired"),
-                },
-            },
-        },
-        "weather": {
-            "available": bool(weather.get("available")),
-            "forecastSource": weather.get("source"),
-            "forecastFetchedAt": iso_from_epoch(weather.get("fetchedEpoch")),
-            "forecastAgeMinutes": weather_age_minutes,
-            "trailPeriod": trail_weather,
-            "role": "forecast_inputs_and_secondary_weather_context",
-            "usedForParticleForecast": bool((result.get("forecastPolicy") or {}).get("weatherUsedForParticleForecast")),
-            "particleRelationshipValidated": False,
-            "rainLearning": {
-                "status": "evaluation_only",
-                "appliedToPrimaryForecast": False,
-                "modelVersion": (result.get("rainLearning") or {}).get("modelVersion"),
-                "weatherFetchedAt": iso_from_epoch((result.get("rainLearning") or {}).get("weatherFetchedEpoch")),
-                "reason": "Fixed paired tests did not demonstrate better PM forecast accuracy.",
-                "context": (result.get("rainLearning") or {}).get("rainContext") or {},
-            },
-            "regionalTransport": regional_transport,
-            "subangReference": {
-                "role": "corroborating_context",
-                "usedForParticleForecast": False,
-                "station": "SUBANG",
-                "wigosId": SUBANG_WIGOS_ID,
-                "timestamp": subang.get("timestamp"),
-                "ageMinutes": subang_age_minutes,
-                "temperatureC": subang.get("atmp"),
-                "relativeHumidityPct": subang.get("rhum"),
-                "windSpeedKmh": subang.get("wind_speed_kmh"),
-                "windDirection": subang.get("windCompass"),
-                "visibilityKm": subang.get("visibility_km"),
-            },
-        },
-        "clearanceEvent": clearance_event,
-        "rideWindows": {
-            "comparison": {
-                "status": "ready" if comparison.get("ready") else "collecting",
-                "role": comparison.get("role"),
-                "prescriptiveRecommendation": False,
-                "policyId": comparison.get("policyId"),
-                "aggressiveExperimental": bool(
-                    (comparison.get("model") or {}).get("aggressiveMode")
-                ),
-                "headline": comparison.get("headline"),
-                "summary": comparison.get("summary"),
-                "pm": comparison.get("pm"),
-                "weather": comparison.get("weather"),
-                "confidence": confidence_code(comparison.get("confidence")),
-                "particleModel": comparison.get("model"),
-            },
-            **window_payloads,
-        },
-        "evidenceQuality": {
-            "state": "limited" if limitations else "adequate",
-            "limitations": limitations,
-            "localMeanIssuedValidation": (result.get("shadowForecast") or {}).get("prospectiveEvidence"),
-        },
-        "provenance": {
-            "forecastPolicy": result.get("forecastPolicy") or {},
-            "nearTermSelectionDiagnostics": air_window.get("nearTermSelectionDiagnostics") or {},
-            "sensor": {
-                "provider": "AirGradient",
-                "locationId": LOCATION_ID,
-                "measurement": "raw particle concentration",
-                "observedAt": reading.get("timestamp") or iso_from_epoch(reading_epoch),
-                "ageSeconds": age_seconds,
-                "pollSeconds": POLL_SECONDS,
-                "staleAfterSeconds": SENSOR_DEGRADED_SECONDS,
-                "expiredAfterSeconds": SENSOR_UNAVAILABLE_SECONDS,
-            },
-            "weatherForecast": {
-                "provider": "Open-Meteo Best Match",
-                "fetchedAt": iso_from_epoch(weather.get("fetchedEpoch")),
-                "ageMinutes": weather_age_minutes,
-                "validation": {
-                    "supported": bool(weather_evidence.get("supported")),
-                    "originCount": weather_evidence.get("originCount"),
-                    "minimumOrigins": weather_evidence.get("minimumOrigins"),
-                },
-            },
-            "particleForecast": {
-                "provider": "Experimental session models with same-issue sensor reference; selected model identified per card",
-                "modelVersion": (result.get("windowPrediction") or {}).get("modelVersion"),
-                "modelsByWindow": (result.get("windowPrediction") or {}).get("modelsByWindow") or {},
-                "modelPointApplied": any((v.get("particleForecast") or {}).get("available")
-                    and (v.get("particleForecast") or {}).get("point") is not None
-                    and (v.get("particleForecast") or {}).get("pointRole") in
-                    {"experimental_window_mean", "experimental_model_output", "raw_model_output"}
-                    for v in (result.get("windows") or {}).values()),
-                "directComparisonEligible": False,
-                "fetchedAt": iso_from_epoch(
-                    (air_quality_payload or {}).get("fetchedEpoch")
-                ),
-                "error": air_quality_error,
-                "attributionUrl": "https://open-meteo.com/en/docs/air-quality-api",
-                "legacyCamsValidation": {
-                    "mode": issued_particle.get("validationMode"),
-                    "supported": bool(issued_particle.get("supported")),
-                    "scoredWindowCount": issued_particle.get(
-                        "scoredWindowCount"
-                    ),
-                    "minimumScoredWindows": issued_particle.get(
-                        "minimumScoredWindows"
-                    ),
-                    "distinctDays": issued_particle.get("distinctDays"),
-                    "minimumDistinctDays": issued_particle.get(
-                        "minimumDistinctDays"
-                    ),
-                },
-                "validation": {
-                    "mode": "as_issued_same_session_target_lead_and_local_issue_clock",
-                    "supported": any(((v.get("particleForecast") or {}).get("modelEvidence") or {}).get("supportSufficient")
-                                     for v in (result.get("windows") or {}).values()),
-                    "prospectivelyValidated": False,
-                    "byWindow": {key: (value.get("particleForecast") or {}).get("modelEvidence") or {}
-                                 for key, value in (result.get("windows") or {}).items()},
-                },
-                "regionalCorrectionTrial": (result.get("windowPrediction") or {}).get("regionalCorrectionTrial"),
-            },
-            "weatherReference": {
-                "provider": "MET Malaysia", "station": "SUBANG",
-                "wigosId": SUBANG_WIGOS_ID,
-            },
-            **analysis_provenance,
-            "historyHoursAvailable": result.get("historyHours"),
-            "sampleCount": result.get("sampleCount"),
-        },
-        "links": ride_api_links(),
-    })
-    return json_safe(base)
-
-
 def csv_export(days):
     cutoff = int(time.time() - max(1.0, min(float(days), RETENTION_DAYS)) * 86400)
     with db() as conn:
@@ -11609,15 +9225,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print("[HTTP]", fmt % args)
 
-    def send_data(self, status, content_type, payload, filename=None,
-                  cache_control=None, headers=None):
+    def send_data(self, status, content_type, payload, filename=None, headers=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
-        self.send_header(
-            "Cache-Control",
-            cache_control or "no-store, no-cache, must-revalidate",
-        )
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
         if filename:
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         for name, value in (headers or {}).items():
@@ -11626,57 +9238,11 @@ class Handler(BaseHTTPRequestHandler):
         if payload:
             self.wfile.write(payload)
 
-    def send_json(self, obj, status=200, headers=None):
+    def send_json(self, obj, status=200):
         self.send_data(status, "application/json; charset=utf-8",
                        json.dumps(
                            json_safe(obj), ensure_ascii=False, allow_nan=False
-                       ).encode("utf-8"), headers=headers)
-
-    def send_versioned_data(self, content_type, payload, contract_revision=None):
-        """Serve a reusable contract resource with validator-aware caching."""
-        etag = representation_etag(payload)
-        contract_revision = contract_revision or coach_api_contract_revision()
-        headers = {
-            "ETag": etag,
-            "X-API-Schema-Version": RIDE_API_SCHEMA_VERSION,
-            "X-Contract-Revision": contract_revision,
-        }
-        if_none_match = ",".join(
-            self.headers.get_all("If-None-Match", failobj=[]) or []
-        )
-        if if_none_match_matches(if_none_match, etag):
-            self.send_response(304)
-            self.send_header("Cache-Control", "no-cache")
-            for name, value in headers.items():
-                self.send_header(name, value)
-            self.end_headers()
-            return
-        self.send_data(
-            200, content_type, payload, cache_control="no-cache", headers=headers
-        )
-
-    def send_versioned_json(self, obj, content_type, contract_revision=None):
-        payload = json.dumps(
-            json_safe(obj), ensure_ascii=False, allow_nan=False,
-            sort_keys=True, indent=2,
-        ).encode("utf-8")
-        self.send_versioned_data(
-            content_type, payload, contract_revision=contract_revision
-        )
-
-    @staticmethod
-    def coach_discovery_headers(contract):
-        return {
-            "Link": (
-                '</api/openapi.json>; rel="service-desc"; '
-                'type="application/vnd.oai.openapi+json", '
-                '</api/v1/mtb/environment-evidence/schema>; '
-                'rel="describedby"; type="application/schema+json", '
-                '</docs/coach-api.md>; rel="help"; type="text/markdown"'
-            ),
-            "X-API-Schema-Version": RIDE_API_SCHEMA_VERSION,
-            "X-Contract-Revision": contract["revision"],
-        }
+                       ).encode("utf-8"))
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -11717,61 +9283,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if route == "/api/openapi.json":
-            revision = coach_api_contract_revision()
-            self.send_versioned_json(
-                ride_api_openapi(revision),
-                "application/vnd.oai.openapi+json;version=3.1; charset=utf-8",
-                contract_revision=revision,
+            self.send_data(
+                200, "application/vnd.oai.openapi+json;version=3.1; charset=utf-8",
+                json.dumps(
+                    dashboard_openapi(), ensure_ascii=False, allow_nan=False, indent=2,
+                ).encode("utf-8"),
             )
-            return
-
-        if route == "/api/v1/mtb/environment-evidence/schema":
-            revision = coach_api_contract_revision()
-            self.send_versioned_json(
-                ride_evidence_json_schema(),
-                "application/schema+json; charset=utf-8",
-                contract_revision=revision,
-            )
-            return
-
-        if route == "/docs/coach-api.md":
-            document = coach_api_document_bytes()
-            revision = coach_api_contract_revision(document)
-            self.send_versioned_data(
-                "text/markdown; charset=utf-8", document,
-                contract_revision=revision,
-            )
-            return
-
-        if route == "/api/v1/mtb/environment-evidence":
-            try:
-                payload = ride_conditions_api()
-                contract = payload["contract"]
-                discovery_headers = self.coach_discovery_headers(contract)
-                status = 503 if payload["status"]["state"] == "unavailable" else 200
-                self.send_json(payload, status, headers=discovery_headers)
-            except Exception as error:
-                print("[HTTP] Environment evidence error:", error)
-                contract = coach_api_contract_metadata()
-                discovery_headers = self.coach_discovery_headers(contract)
-                self.send_json({
-                    "schemaVersion": RIDE_API_SCHEMA_VERSION,
-                    "kind": "mtb_environment_evidence",
-                    "generatedAt": iso_now(),
-                    "evidenceId": None,
-                    "contract": contract,
-                    "boundary": {
-                        "role": "environmental_evidence",
-                        "trainingPrescriptionIncluded": False,
-                        "historicalSeriesIncluded": False,
-                    },
-                    "status": {
-                        "state": "unavailable", "usable": False, "fresh": False,
-                        "message": "Environmental evidence could not be generated.",
-                        "issues": [{"code": "evidence_generation_failed", "severity": "error"}],
-                    },
-                    "links": ride_api_links(),
-                }, 500, headers=discovery_headers)
             return
 
         if route == "/api/cycling-plan":
@@ -11913,7 +9430,11 @@ def arrival_change_model_worker(stop_event=None):
 
 
 def cycling_window_model_worker(stop_event=None):
-    """Fit completed prior-day ride windows outside the HTTP/forecast path."""
+    """Fit completed prior-day ride windows outside the HTTP/forecast path.
+
+    Since v25 only the fixed-window /api/cycling-plan recheck (recheck60 head) uses this fit;
+    the published initial90 probability comes from spatial_point_model (E1).
+    """
     last_status = None
     while stop_event is None or not stop_event.is_set():
         try:
@@ -11931,18 +9452,20 @@ def cycling_window_model_worker(stop_event=None):
             stop_event.wait(60)
 
 
-def fresh_numeric_model_worker(stop_event=None):
-    """Refresh the fixed fresh-sequence numerical model outside serving."""
+def spatial_point_model_worker(stop_event=None):
+    """Refit the v25 spatial point model and its <=70 head once per Malaysia day."""
     last_status = None
     while stop_event is None or not stop_event.is_set():
         try:
-            status = fresh_numeric_model.refresh_model(DB_PATH, issue_epoch=int(time.time()))
+            status = spatial_point_model.refresh_model(DB_PATH, int(time.time()))
             summary = (status.get("trainingCutoffEpoch"), status.get("available"), status.get("reason"))
             if summary != last_status:
-                print(f"[Fresh numeric model] {summary}", flush=True)
+                cache = status.get("featureCache") or {}
+                print(f"[Spatial point model] {summary} | {status.get('fitElapsedSeconds')} s | "
+                      f"{cache.get('computedOrigins')} new feature origins", flush=True)
                 last_status = summary
         except Exception as error:
-            print(f"[Fresh numeric model] {type(error).__name__}: {error}", flush=True)
+            print(f"[Spatial point model] {type(error).__name__}: {error}", flush=True)
         if stop_event is None:
             time.sleep(60)
         else:
@@ -12040,8 +9563,30 @@ def radar_shadow_worker(stop_event=None):
             stop_event.wait(delay)
 
 
+# Known-benign library warnings that otherwise fill the service's stderr log.
+# Each filter is scoped to one exact message, category and issuing module.
+KNOWN_BENIGN_WARNINGS = (
+    # Torch loads Intel libiomp5md beside LLVM libomp140, so every
+    # threadpool_limits() re-issues this (about 4 per minute); its crash
+    # hazard is documented for Linux, and this service runs on Windows.
+    (r"\s*Found Intel OpenMP \('libiomp'\) and LLVM OpenMP \('libomp'\) loaded at\s+the same time",
+     RuntimeWarning, r"threadpoolctl\Z"),
+    # scikit-learn 1.5 deprecation of LogisticRegression(multi_class=...);
+    # arrival_logistic_model still records it in its fitWarnings metadata.
+    (r"'multi_class' was deprecated in version 1\.5 and will be removed in 1\.7",
+     FutureWarning, r"sklearn\.linear_model\._logistic\Z"),
+)
+
+
+def silence_known_benign_warnings():
+    """Ignore only KNOWN_BENIGN_WARNINGS; every other warning still reaches the log."""
+    for message, category, module in KNOWN_BENIGN_WARNINGS:
+        warnings.filterwarnings("ignore", message=message, category=category, module=module)
+
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    silence_known_benign_warnings()
     init_db()
 
     # Bind first so a duplicate instance exits before starting any collectors.
@@ -12063,7 +9608,7 @@ if __name__ == "__main__":
     ).start()
     threading.Thread(target=first_crossing_model_worker, daemon=True, name="first-crossing-model").start()
     threading.Thread(target=arrival_change_model_worker, daemon=True, name="arrival-change-model").start()
-    threading.Thread(target=fresh_numeric_model_worker, daemon=True, name="fresh-numeric-model").start()
+    threading.Thread(target=spatial_point_model_worker, daemon=True, name="spatial-point-model").start()
     threading.Thread(target=cycling_window_model_worker, daemon=True, name="cycling-window-model").start()
     threading.Thread(target=morning_model_worker, daemon=True, name="morning-model").start()
     threading.Thread(target=near_diagnostic_model_worker, daemon=True, name="near-diagnostic-models").start()

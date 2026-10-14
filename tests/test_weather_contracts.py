@@ -1,8 +1,8 @@
 """Full-window weather coverage contracts; synthetic hourly inputs, no I/O."""
+
 from pathlib import Path as _PublicPath
 import sys as _public_sys
 _public_sys.path.insert(0, str(_PublicPath(__file__).resolve().parents[1] / "app"))
-
 from copy import deepcopy
 import unittest
 
@@ -194,7 +194,7 @@ class RlcdEventQualificationTests(unittest.TestCase):
     def test_event_projection_stays_within_device_budget(self):
         import json
         result, _ = self.payload()
-        self.assertLessEqual(len(json.dumps(result, separators=(",", ":")).encode("utf-8")), 8192)
+        self.assertLessEqual(len(json.dumps(result, separators=(",", ":")).encode("utf-8")), rlcd_api.MAX_PAYLOAD_BYTES)
 
     def test_device_history_cap_preserves_observed_extrema_endpoints_gaps_and_summary(self):
         import rlcd_history

@@ -253,12 +253,15 @@ def record_issued_prediction(result,*,output_path=None,recorded_epoch=None,input
         path.parent.mkdir(parents=True,exist_ok=True)
         if resolved not in _READ_PATHS:
             if path.exists():
-                for line in path.read_text(encoding='utf-8').splitlines():
-                    try:
-                        old=json.loads(line)
-                        old_key=(resolved,old['forecastIssuedEpoch'],old['issuedCohort']['modelIdentitySha256'],old.get('featureValuesSha256'),old.get('reason'))
-                        _RECORDED[old_key]=None
-                    except (ValueError,KeyError):continue
+                # A duplicate is a fresh (<=120 s) issue, so only the ledger tail can hold one.
+                with path.open('rb') as stream:
+                    stream.seek(max(0,path.stat().st_size-2_000_000))
+                    for line in stream.read().splitlines():
+                        try:
+                            old=json.loads(line)
+                            old_key=(resolved,old['forecastIssuedEpoch'],old['issuedCohort']['modelIdentitySha256'],old.get('featureValuesSha256'),old.get('reason'))
+                            _RECORDED[old_key]=None
+                        except (ValueError,KeyError,TypeError):continue
             _READ_PATHS.add(resolved)
         if key in _RECORDED:return False
         with path.open('a',encoding='utf-8') as stream:stream.write(json.dumps(record,separators=(',',':'),allow_nan=False)+'\n')

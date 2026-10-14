@@ -6,6 +6,7 @@ import json
 import pickle
 import tempfile
 import unittest
+from collections import OrderedDict
 from pathlib import Path
 from unittest.mock import patch
 import numpy as np
@@ -201,6 +202,23 @@ class LogisticArrivalDistributionTests(unittest.TestCase):
             self.assertEqual(saved['referencePm'],self.reference)
             self.assertEqual(saved['arrivalEpoch'],self.issue+5400)
             self.assertTrue(saved['isOriginallyIssued'])
+
+    def test_restart_dedupes_from_ledger_tail_without_reading_whole_file(self):
+        result=self.infer()
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'issued.jsonl'
+            with path.open('w',encoding='utf-8') as stream:
+                for age in range(300):
+                    stream.write(json.dumps({'forecastIssuedEpoch':self.issue-86400-age,'pad':'x'*10000,
+                                             'issuedCohort':{'modelIdentitySha256':'old'}})+'\n')
+            self.assertGreater(path.stat().st_size,2_000_000)
+            self.assertTrue(model.record_issued_prediction(result,output_path=path,recorded_epoch=self.issue+25))
+            size=path.stat().st_size
+            with (patch.object(model,'_RECORDED',OrderedDict()),patch.object(model,'_READ_PATHS',set()),
+                  patch.object(Path,'read_text',side_effect=AssertionError('whole ledger read'))):
+                self.assertFalse(model.record_issued_prediction(result,output_path=path,recorded_epoch=self.issue+30))
+                self.assertTrue(model.record_issued_prediction({**result,'reason':'other'},output_path=path,recorded_epoch=self.issue+30))
+            self.assertGreater(path.stat().st_size,size)
 
     def test_default_publication_path_is_an_isolated_logistic_cohort(self):
         result=self.infer()

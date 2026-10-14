@@ -58,7 +58,7 @@ def display_text(event):
 
 
 def attach_display_text(event):
-    """Copy an event for web/Coach presentation, leaving its source untouched."""
+    """Copy an event for web presentation, leaving its source untouched."""
     if not isinstance(event, Mapping):
         return {"available": False, "displayText": None}
     return {**event, "displayText": display_text(event)}

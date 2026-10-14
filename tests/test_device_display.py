@@ -1,8 +1,8 @@
 """Synthetic formatter contracts and parity with the dashboard's actual JS."""
+
 from pathlib import Path as _PublicPath
 import sys as _public_sys
 _public_sys.path.insert(0, str(_PublicPath(__file__).resolve().parents[1] / "app"))
-
 import ast
 from copy import deepcopy
 import json
@@ -204,7 +204,7 @@ class ActualWebJavascriptParityTests(unittest.TestCase):
         if node is None:
             raise AssertionError("Node is required for actual dashboard JS parity")
         cls.node = node
-        path = Path(__file__).resolve().parents[1]/"app"/"BukitKiara_Dashboard.py"
+        path = Path(__file__).resolve().parents[1] / "app"/"BukitKiara_Dashboard.py"
         syntax = ast.parse(path.read_text(encoding="utf-8-sig"))
         cls.html = next(ast.literal_eval(item.value) for item in syntax.body if isinstance(item, ast.Assign)
                         and any(isinstance(target, ast.Name) and target.id == "HTML" for target in item.targets))

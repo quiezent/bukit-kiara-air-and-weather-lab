@@ -79,7 +79,7 @@ def attach_outputs(air_window, source, issue_epoch):
                     qualified=False, validated=False, prospectivelyValidated=False,
                     calibrated=False, usedForDecision=False, usedForComparison=False,
                     confidence='Predictive accuracy check in progress', reason=head_reason,
-                    method='Fresh sensor sequence joint learned model',
+                    method=source.get('method') or 'Fresh sensor sequence joint learned model',
                     performanceEvidence=deepcopy(source.get('performanceEvidence') or {}),
                     modelFeatureAnchor=source.get('freshReferencePm25'),
                     modelFeatureAnchorEpoch=issue,

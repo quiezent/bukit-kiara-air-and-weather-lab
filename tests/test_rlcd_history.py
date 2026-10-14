@@ -1,8 +1,8 @@
 """Synthetic tests for bounded shared observed history; no database or models."""
+
 from pathlib import Path as _PublicPath
 import sys as _public_sys
 _public_sys.path.insert(0, str(_PublicPath(__file__).resolve().parents[1] / "app"))
-
 import math
 import unittest
 

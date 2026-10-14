@@ -49,8 +49,8 @@ class DirectPipelineTests(unittest.TestCase):
             'backtest':{'deploymentSkill':{'arrival':{'eligible':False},'trailMean':{'eligible':False}}}}
         fresh={'available':True,'arrivalPoint':NEAR_POINT,'trailMeanPoint':NEAR_MEAN,
             'trailMinimumPoint':128.123456,'trailMaximumPoint':139.987654,
-            'modelVersion':app.fresh_numeric_model.MODEL_VERSION,
-            'forecastClock':app.fresh_numeric_model.forecast_clock(ISSUE),
+            'modelVersion':app.spatial_point_model.MODEL_VERSION,
+            'forecastClock':app.spatial_point_model.forecast_clock(ISSUE),
             'freshReferencePm25':163.2,
             'performanceEvidence':{'mae':999,'baselineMae':1,'qualified':False}}
         with tempfile.TemporaryDirectory() as folder, ExitStack() as stack:
@@ -63,7 +63,7 @@ class DirectPipelineTests(unittest.TestCase):
             stack.enter_context(patch.object(app,'air_window_analysis',return_value=air))
             stack.enter_context(patch.object(app,'refresh_near_term_persistence',return_value=air))
             stack.enter_context(patch.object(app,'cached_shadow_analogue_outlook',return_value=shadow))
-            stack.enter_context(patch.object(app.fresh_numeric_model,'predict',return_value=fresh))
+            stack.enter_context(patch.object(app.spatial_point_model,'predict',return_value=fresh))
             stack.enter_context(patch.object(app,'record_local_pm_forecast_issue'))
             stack.enter_context(patch.object(app,'rapid_clearance_event_outlook',return_value={}))
             stack.enter_context(patch.object(app,'shadow_dry_dispersion_watch',return_value={}))
@@ -97,10 +97,10 @@ class DirectPipelineTests(unittest.TestCase):
                 self.assertEqual(result['windowPrediction']['predictions'][key]['mean'],expected)
                 self.assertEqual(result['windows'][key]['particleForecast']['point'],expected)
                 self.assertEqual(result['rideForecast']['windows'][key]['point'],expected)
-                compact=app.compact_window_particle_forecast(result['windows'][key]['particleForecast'])
-                self.assertTrue(compact['modelPointApplied'])
-                self.assertEqual(compact['numericalPolicyIdentifier'],'fixture_direct_model_output')
-                self.assertEqual(compact['baselineMeanPm25UgM3'],163.2)
+                particle=result['windows'][key]['particleForecast']
+                self.assertTrue(particle['available'])
+                self.assertEqual(particle['numericalPolicyIdentifier'],'fixture_direct_model_output')
+                self.assertEqual(particle['baselinePoint'],163.2)
             for method in forbidden:method.assert_not_called()
             result['computation']={'seconds':0.1}
             app.archive_published_analysis(result)

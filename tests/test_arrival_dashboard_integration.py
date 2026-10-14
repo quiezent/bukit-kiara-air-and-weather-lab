@@ -107,15 +107,15 @@ class ArrivalDashboardIntegrationTests(unittest.TestCase):
             app, "air_window_analysis", side_effect=lambda *args: deepcopy(self.parent),
         ))
         self.numeric = {
-            "available": True, "modelVersion": app.fresh_numeric_model.MODEL_VERSION,
-            "forecastClock": app.fresh_numeric_model.forecast_clock(self.issue),
+            "available": True, "modelVersion": app.spatial_point_model.MODEL_VERSION,
+            "forecastClock": app.spatial_point_model.forecast_clock(self.issue),
             "arrivalPoint": 111.12345678901234, "trailMeanPoint": 109.98765432101234,
             "trailMinimumPoint": 91.1, "trailMaximumPoint": 129.2,
             "freshReferencePm25": self.reference,
             "inputLineage": fresh_sensor_features.feature_metadata(self.rows, self.issue),
         }
         self.numeric_spy = self.stack.enter_context(patch.object(
-            app.fresh_numeric_model, "predict", side_effect=lambda *args: deepcopy(self.numeric),
+            app.spatial_point_model, "predict", side_effect=lambda *args: deepcopy(self.numeric),
         ))
         for name, value in {
             "passing_shower_signal": {"state": "none"},
@@ -126,7 +126,6 @@ class ArrivalDashboardIntegrationTests(unittest.TestCase):
             "latest_air_quality_payload": None,
             "regional_haze_window_outlook": {"available": False},
             "paired_history": ({"morning": {}, "afternoon": {}}, [], None),
-            "coach_api_contract_metadata": {},
         }.items():
             self.stack.enter_context(patch.object(app, name, return_value=value))
         self.stack.enter_context(patch.object(
@@ -186,7 +185,7 @@ class ArrivalDashboardIntegrationTests(unittest.TestCase):
 
     def test_probability_survives_collecting_parent_and_missing_numeric_asset_in_all_consumers(self):
         self.parent = {"available": False, "state": "collecting", "arrival": {"available": False}, "trail": {"available": False}}
-        self.numeric.update(available=False, reason="fresh_numeric_model_asset_unavailable", arrivalPoint=None,
+        self.numeric.update(available=False, reason="spatial_point_model_asset_unavailable", arrivalPoint=None,
                             trailMeanPoint=None, trailMinimumPoint=None, trailMaximumPoint=None)
         result = self.compute()
         air = result["airWindow"]
@@ -199,10 +198,6 @@ class ArrivalDashboardIntegrationTests(unittest.TestCase):
         self.assertFalse(device["forecast"]["near90"]["available"])
         self.assertIsNone(device["forecast"]["near90"]["pm25_ugm3"])
         self.assertTrue(device["forecast"]["near90"]["arrival_change"]["available"])
-        with patch.object(app, "analysis", return_value=result):
-            coach = app.ride_conditions_api(now_epoch=self.issue + 20)
-        self.assertTrue(coach["exposureOutlook"]["arrivalChangeForecast"]["available"])
-        self.assertIsNone(coach["exposureOutlook"]["arrival"]["projectedPm25UgM3"])
         node = shutil.which("node")
         self.assertIsNotNone(node, "Node is required for actual frontend integration")
         frontend = '''
@@ -240,7 +235,7 @@ console.log(JSON.stringify({visible:!node('arrivalChangeProbabilities').hidden,f
             for module in (app.window_pm_predictor, app.weather_session_forecast, app.afternoon_xgboost_forecast):
                 publication.enter_context(patch.object(module, "record_issue"))
             publication.enter_context(patch.object(app.fresh_event_model, "record_issued_prediction"))
-            publication.enter_context(patch.object(app.cycling_window_live, "record_issued_prediction"))
+            publication.enter_context(patch.object(app.spatial_point_model, "record_issued_le70"))
             writer = publication.enter_context(patch.object(arrival_change_model, "record_issued_prediction", side_effect=write_prediction))
             app.analysis_worker(stop)
         writer.assert_called_once()
