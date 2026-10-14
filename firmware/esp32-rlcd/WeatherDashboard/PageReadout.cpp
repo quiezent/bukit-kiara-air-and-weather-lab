@@ -226,7 +226,7 @@ bool sessionPmAvailable(JsonVariantConst session, JsonVariantConst forecast, uin
       && forecastModelPointAvailable(pm);
 }
 
-bool sessionRainWarning(Readout &out, JsonVariantConst session, JsonVariantConst forecast,
+bool sessionHighRain(Readout &out, JsonVariantConst session, JsonVariantConst forecast,
                         uint32_t now, SessionLabel label, bool &oldAnnounced) {
   const JsonVariantConst weather = session["weather"];
   const float rain = number(weather["rain_chance_max_pct"]);
@@ -240,7 +240,7 @@ bool sessionRainWarning(Readout &out, JsonVariantConst session, JsonVariantConst
     if (!out.announcement(SpeechClip::Old, "Data is old")) return false;
     oldAnnounced = true;
   }
-  if (!out.phrase(SpeechClip::Warning, "Warning") || !out.phrase(label.clip, label.words)
+  if (!out.phrase(label.clip, label.words)
       || !out.phrase(SpeechClip::HighRainChance, "has a high rain chance of")
       || !out.value(rain, rainPrecision(rain)) || !out.phrase(SpeechClip::Percent, "percent")) return false;
   out.sentence();
@@ -274,9 +274,7 @@ bool sports(Readout &out, const DashboardContext &context, uint32_t now) {
     oldAnnounced = true;
   }
   const float rain = number(weather["rain_chance_max_pct"]);
-  const bool warn = weatherOk && readoutValueValid(rain, 0, 100) && rain > 75;
-  if (!out.measurement(warn ? SpeechClip::RideRainWarning : SpeechClip::RainChance,
-      warn ? "Warning, ride window rain chance" : "Rain chance", rain,
+  if (!out.measurement(SpeechClip::RainChance, "Rain chance", rain,
       SpeechClip::Percent, "percent", rainPrecision(rain), 0, 100, weatherOk)) return false;
   const JsonVariantConst morning = forecast["sessions"]["morning"];
   const JsonVariantConst afternoon = forecast["sessions"]["afternoon"];
@@ -301,8 +299,8 @@ bool sports(Readout &out, const DashboardContext &context, uint32_t now) {
       out.sentence();
     }
   }
-  return !forecastOk || (sessionRainWarning(out, morning, forecast, now, morningLabel, oldAnnounced)
-      && sessionRainWarning(out, afternoon, forecast, now, afternoonLabel, oldAnnounced));
+  return !forecastOk || (sessionHighRain(out, morning, forecast, now, morningLabel, oldAnnounced)
+      && sessionHighRain(out, afternoon, forecast, now, afternoonLabel, oldAnnounced));
 }
 
 struct Latest {

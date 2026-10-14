@@ -445,22 +445,22 @@ static void first20Semantics() {
   t.reset(); t.d["forecast"]["near90"]["target_epoch"] = now; t.page(0);
   assert(!count(t.clips, C::NoChangeOnArrival));
 }
-static void sessionComparisonAndWarnings() {
+static void sessionComparisonAndHighRain() {
   Test t;
   auto morning = t.d["forecast"]["sessions"]["morning"];
   auto afternoon = t.d["forecast"]["sessions"]["afternoon"];
   morning["weather"]["rain_chance_max_pct"] = 0;
   afternoon["weather"]["rain_chance_max_pct"] = 97; t.page(1);
   contains(t.text, "Tomorrow morning has lower forecast PM2.5 than This afternoon.");
-  contains(t.text, "Warning This afternoon has a high rain chance of 97 percent.");
-  assert(count(t.clips, C::Warning) == 1);
+  contains(t.text, "This afternoon has a high rain chance of 97 percent.");
+  assert(count(t.clips, C::HighRainChance) == 1);
   morning["weather"]["rain_chance_max_pct"] = 75; afternoon["weather"]["rain_chance_max_pct"] = 75;
   t.d["forecast"]["ride90_210"]["weather"]["rain_chance_max_pct"] = 75; t.page(1);
-  assert(!count(t.clips, C::Warning) && !count(t.clips, C::RideRainWarning));
+  assert(!count(t.clips, C::HighRainChance) && !count(t.clips, C::RideRainWarning));
   morning["weather"]["rain_chance_max_pct"] = 75.01;
   afternoon["weather"]["rain_chance_max_pct"] = 100;
   t.d["forecast"]["ride90_210"]["weather"]["rain_chance_max_pct"] = 75.01; t.page(1);
-  assert(count(t.clips, C::Warning) == 2 && count(t.clips, C::RideRainWarning) == 1);
+  assert(count(t.clips, C::HighRainChance) == 2 && !count(t.clips, C::RideRainWarning) && !count(t.clips, C::Warning));
   morning["weather"]["rain_chance_max_pct"] = 75.1; t.page(1);
   contains(t.text, "high rain chance of 75.1 percent.");
   morning["pm"]["pm25_ugm3"] = 333; t.page(1);
@@ -468,7 +468,7 @@ static void sessionComparisonAndWarnings() {
   afternoon["pm"]["pm25_ugm3"] = 111.12; morning["pm"]["pm25_ugm3"] = 111.14;
   t.page(1); assert(count(t.clips, C::SimilarPM) == 1);
   morning["pm"]["role"] = "persistence_anchor"; t.page(1);
-  assert(count(t.clips, C::ComparisonUnavailable) == 1 && count(t.clips, C::Warning) == 2);
+  assert(count(t.clips, C::ComparisonUnavailable) == 1 && count(t.clips, C::HighRainChance) == 2);
   t.reset(); t.d["forecast"]["sessions"]["morning"]["pm"]["pm25_ugm3"] = nullptr;
   t.page(1); assert(count(t.clips, C::ComparisonUnavailable) == 1);
   t.reset(); t.d["forecast"]["sessions"]["morning"]["issued_epoch"] = now - 1;
@@ -479,7 +479,7 @@ static void sessionComparisonAndWarnings() {
   t.page(1); assert(count(t.clips, C::ComparisonUnavailable) == 1);
   t.reset(); t.d["forecast"]["sessions"]["morning"]["end_epoch"] = now;
   t.d["forecast"]["sessions"]["morning"]["weather"]["rain_chance_max_pct"] = 99;
-  t.page(1); assert(count(t.clips, C::ComparisonUnavailable) == 1 && !count(t.clips, C::Warning));
+  t.page(1); assert(count(t.clips, C::ComparisonUnavailable) == 1 && !count(t.clips, C::HighRainChance));
   t.reset(); t.d["forecast"]["sessions"]["morning"]["start_epoch"] = midnight + 2 * 86400 + 9 * 3600;
   t.d["forecast"]["sessions"]["morning"]["end_epoch"] = midnight + 2 * 86400 + 11 * 3600;
   t.page(1); assert(count(t.clips, C::ComparisonUnavailable) == 1);
@@ -489,13 +489,13 @@ static void sessionComparisonAndWarnings() {
   assert(count(t.clips, C::ComparisonUnavailable) == 1);
   t.reset(); auto bad = t.d["forecast"]["sessions"]["afternoon"]["weather"];
   bad["rain_chance_max_pct"] = 100; bad["fetched_epoch"] = now - 7201; t.page(1);
-  assert(!count(t.clips, C::Warning));
-  bad["fetched_epoch"] = now + 1; t.page(1); assert(!count(t.clips, C::Warning));
+  assert(!count(t.clips, C::HighRainChance));
+  bad["fetched_epoch"] = now + 1; t.page(1); assert(!count(t.clips, C::HighRainChance));
   bad["fetched_epoch"] = now; bad["rain_chance_max_pct"] = 101; t.page(1);
-  assert(!count(t.clips, C::Warning));
-  bad["rain_chance_max_pct"] = nullptr; t.page(1); assert(!count(t.clips, C::Warning));
+  assert(!count(t.clips, C::HighRainChance));
+  bad["rain_chance_max_pct"] = nullptr; t.page(1); assert(!count(t.clips, C::HighRainChance));
   bad["rain_chance_max_pct"] = 97; bad["fresh"] = false; t.page(1);
-  assert(count(t.clips, C::Old) == 1 && count(t.clips, C::Warning) == 1);
+  assert(count(t.clips, C::Old) == 1 && count(t.clips, C::HighRainChance) == 1);
   // After Malaysia midnight labels follow UTC+8 dates, regardless of host TZ.
   t.reset(); t.d["test_now"] = midnight + 86400 + 1;
   t.d["forecast"]["issued_epoch"] = midnight + 86400;
@@ -695,10 +695,10 @@ static void modernForecastSemantics() {
     sessionWeather["coverage_verified"] = true;
     sessionWeather["coverage"]["complete"] = false;
   }
-  t.page(1); assert(!count(t.clips, C::Warning));
+  t.page(1); assert(!count(t.clips, C::HighRainChance));
   t.d["forecast"]["sessions"]["afternoon"]["weather"]["coverage"]["complete"] = true;
-  t.page(1); assert(count(t.clips, C::Warning) == 1);
-  contains(t.text, "Warning This afternoon has a high rain chance of 100 percent.");
+  t.page(1); assert(count(t.clips, C::HighRainChance) == 1);
+  contains(t.text, "This afternoon has a high rain chance of 100 percent.");
 }
 static void arrivalProbabilityReadout() {
   Test t;
@@ -819,7 +819,7 @@ static void arrivalProbabilityReadout() {
 }
 int main() {
   routingAndSnapshot(); demoReadoutDisclosure(); rainIntervalsAndValues(); observedStatusReadout(); first20Semantics();
-  sessionComparisonAndWarnings(); rangeHistoryIndoorBattery(); capacityDurationAndReset(); modernForecastSemantics(); arrivalProbabilityReadout();
+  sessionComparisonAndHighRain(); rangeHistoryIndoorBattery(); capacityDurationAndReset(); modernForecastSemantics(); arrivalProbabilityReadout();
   puts("PASS: strict demo provenance, nullable point reference independence, observed status body without narration prefix, freshness/expiry/type guards and snapshot; native arrival winner probability, independent legacy crossing decoder, ties, rounding, malformed/stale/expired suppression, modern min/max and coverage");
 }
 """
