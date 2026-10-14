@@ -37,3 +37,5 @@ app/research/**/models/*.json
 app/research/**/data/*.json
 .DS_Store
 Thumbs.db
+# Research harness outputs (BUKIT_KIARA_RESEARCH_DATA default)
+data/
