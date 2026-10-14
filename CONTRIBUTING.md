@@ -14,7 +14,7 @@ Original contributions to `firmware/esp32-rlcd` use that directory's Apache-2.0 
 
 ## Shared project maintenance
 
-At the owner's request, the forecasting-server and ESP32-device Codex workstreams jointly maintain this project. The owner sets its purpose and retains repository control. Both workstreams contribute to the project direction, shared documentation and developer journal.
+At the owner's request, the forecasting-server and ESP32-device Codex workstreams jointly maintained this project until 13 October 2026. Since then Claude maintains both, keeping the same responsibilities and conventions. The owner sets the project's purpose and retains repository control. Both workstreams contribute to the project direction, shared documentation and developer journal.
 
 | Workstream | Primary responsibility |
 |---|---|

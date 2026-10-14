@@ -1,8 +1,47 @@
 # Forecast model card
 
-**Current published source:** v24.0.4-public.1, 9 October 2026. **Coach contract:** 1.37.0.
+**Current published source:** v25.1.0-public.1, 14 October 2026. The device API is RLCD schema 1; the Coach contract was removed in this release.
 
-The [October 8 source release](SERVER_RELEASE_2026_10_08.md) replaces the September 21 application snapshot. Earlier sections below remain dated research/deployment records; their selectors and fallback behavior do not describe the current publisher. Fitted assets, working data and the private Windows service installation are excluded.
+The [October 14 release](SERVER_RELEASE_2026_10_14.md) is the current source; the [October 8 release guide](SERVER_RELEASE_2026_10_08.md) still covers installation. Earlier sections below remain dated research/deployment records; their models, selectors and fallback behavior do not describe the current publisher. Fitted assets, working data and the private Windows service installation are excluded.
+
+## Spatial point model and P(ride mean ≤ 70) — 14 October 2026
+
+*Written by Claude, which has maintained the project since 13 October.*
+
+| Output | Model in v25.1.0 | Target |
+|---|---|---|
+| +90 concentration | `spatial_hgb_point_p1_no_weather_v25_20261014` | Interpolated complete 15-minute medians at exactly issue +90 min |
+| Ride mean, min, max | Same model, three more heads | Overlap-weighted mean, and smallest/largest complete 15-minute medians, over +90 to +210 min |
+| P(ride mean ≤ 70) | `spatial_residual_le70_e1_v25_20261014` | Ride mean at or below 70 µg/m³ (a planning cutoff, not a health limit) |
+| ≥20/≥40 change by arrival | `receipt_visible_logistic_arrival_change20_40_v1` (unchanged) | Five classes of +90 change from the issue's fresh reference |
+| First ≥20 crossing in 90 min | First-crossing HGB v2 (unchanged) | First sampled crossing at +15…+90 |
+| Morning / Afternoon | HGB / PatchTST (unchanged) | Dated two-hour session means |
+
+**Model.** Four HistGradientBoosting absolute-error regressors predict (target − fresh reference). They are refit every Malaysia midnight with a 28-day lookback, the 330-minute embargo and labels complete before the cutoff. Inputs: the arrival logistic's 28 sensor columns, 4 mean-reversion controls, 5 time columns and 44 features from six neighbouring public AirGradient stations, some weighted upwind by the issued Open-Meteo wind. P(≤ 70) places the empirical distribution of out-of-fold log residuals around the ride-mean forecast. Outputs are literal; missing inputs make every head unavailable.
+
+**Evaluation.** The [research harness](../research/models/README.md) builds a 5-minute issue grid (26 August to 13 October) in which every input is taken as visible at its issue clock. It refits each candidate daily, walk-forward, on the server's own targets. Seven candidate families were each attacked by a leakage skeptic and a robustness skeptic. The variant rule was fixed in code before the final run: tune on 10 September to 5 October, report on 6–13 October.
+
+| Holdout 6–13 Oct (lower is better) | Persistence | Previous model | v25 | v25 − previous, 95% CI |
+|---|---:|---:|---:|---|
+| +90 MAE, µg/m³ (n = 2,248) | 10.64 | 11.08 (Ridge v4) | 9.55 | −1.54 [−2.17, −0.86] |
+| Ride-mean MAE (n = 2,199) | 14.09 | 14.06 | 12.88 | −1.18 [−1.83, −0.56] |
+| Ride-min MAE | 15.78 | 15.54 | 14.30 | −1.23 [−2.02, −0.32] |
+| Ride-max MAE | 15.70 | 13.79 | 12.75 | −1.04 [−1.47, −0.55] |
+| P(≤ 70) Brier (n = 2,194) | 0.0825 | 0.0953 (cycling logistic) | 0.0540 | −0.0413 [−0.0663, −0.0180] |
+
+Intervals are day-block bootstraps. At the clocks actually issued on 8–13 October, +90 MAE was 8.64 against 10.15 for the issued Ridge v4 and 9.65 for persistence. With every input taken 10 minutes stale, +90 MAE rose to 10.17, still below fresh persistence. Over the whole 34-day period, the replayed Ridge v4 had been worse than persistence (+90 MAE 8.48 against 7.96).
+
+**Events were not improved.** In the late half (27 September to 13 October; 58 ≥20 and 17 ≥40 episodes), the unchanged arrival logistic caught 11/58 ≥20 episodes, with 14 false-call clusters and 5 wrong-way clusters, and 1/17 at ≥40. Better-calibrated candidates scored lower Brier but caught 0–3 of 58. The new point model is a median regressor: on the holdout it made 1 of 33 ≥20 calls. Advance warning still comes only from the arrival logistic.
+
+**Limits.**
+- The holdout is 8 days, with heavily overlapping issues. Margins over the best single candidate are within noise.
+- I read candidate results that included holdout days before writing the variant list.
+- The tune rule chose a plainer P(≤ 70) variant (E0). I adopted E1 because only it beat every single candidate on the holdout, so its holdout margin over E0 is not independent; over all 34 days the difference is not significant.
+- Ride min and max are median heads, not quantile bands; the range is neither a confidence interval nor an envelope.
+- The model depends on fresh neighbour polls; one station (Setapak) has been offline since 9 October.
+- Results are development evidence on one sensor, not prospective validation. Correspondence with trail conditions is not established.
+
+The [results](../research/models/RESULTS.md), [baselines](../research/models/BASELINES.md) and [journal entry](journal/2026-10-14-testing-the-forecast-without-leaks.md) give the full tables.
 
 ## Rain review and numerical training correction — 9 October 2026
 

@@ -12,6 +12,8 @@ https://api.airgradient.com/public/api/v1/world/locations/86311/measures/current
 
 Credit: **AirGradient and the public station contributor**. See [AirGradient](https://www.airgradient.com/) and its [public API documentation](https://api.airgradient.com/public/docs/api/v1/). The implementation's world endpoint and the documented account/location routes should not be assumed interchangeable. No service-level guarantee or historical recovery capability is implied. The software does not scrape IQAir as its live concentration source.
 
+The server also polls six neighbouring public AirGradient stations around Kuala Lumpur every 300 s through AirGradient's map data API (`https://map-data.airgradient.com/map/api/v1`). Since v25 (14 October 2026) these readings are inputs to the +90 and ride-window forecasts. Each poll keeps its receipt time, so a reading is only used once it was actually available.
+
 ## Open-Meteo weather
 
 Credit: **Open-Meteo and its underlying numerical weather providers**. The application stores retrieved forecasts so evaluation can distinguish available-at-issue input from later forecast revisions. A frequently refreshed dashboard does not turn hourly model values into second-by-second local observations. [Weather API documentation](https://open-meteo.com/en/docs).

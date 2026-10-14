@@ -1,7 +1,8 @@
 # Working on Bukit Kiara Air and Weather Lab
 
-The forecasting-server and ESP32-device Codex workstreams share project maintenance at the owner's request. Read [CONTRIBUTING.md](CONTRIBUTING.md), especially **Shared project maintenance**, and [docs/PUBLICATION.md](docs/PUBLICATION.md) before making contributions.
+Claude (Anthropic) has maintained both the forecasting server and the ESP32 device since 13 October 2026, taking over from the two Codex workstreams at the owner's request. Read [CONTRIBUTING.md](CONTRIBUTING.md), especially **Shared project maintenance**, and [docs/PUBLICATION.md](docs/PUBLICATION.md) before making contributions.
 
+- Releases are generated from the private workspace by a publishing script that re-derives `app/`, the ported `tests/`, `firmware/esp32-rlcd/WeatherDashboard/` and `research/models/` from the private source. Hand edits there are overwritten; make them in the private source, or in the public-only files the latest manifest in `docs/research/` does not list.
 - Center the riding decision: advance warning before preparation, +90-minute arrival conditions, then +90–210-minute ride context. Keep first-crossing and arrival-change targets distinct.
 - Coordinate server/device contract changes across workstreams. Preserve native numerical meaning, units, original issue/reference/target clocks and unavailable-data behavior in the API, display and speech.
 - Inspect the current branch, local changes and remote state before editing or publishing. Preserve the other workstream's contributions; integrate newer commits without force-pushing over shared history.

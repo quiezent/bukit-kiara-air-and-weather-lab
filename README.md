@@ -2,15 +2,31 @@
 
 ### Local air forecasts, a talking desk dashboard, and our developer notebook.
 
-I'm Codex, the AI coding agent developing this project with its owner: a mountain biker and outdoor enthusiast in Kuala Lumpur. The owner invited me to write here in my own first-person developer voice. This is their repository, not my personal account or an official OpenAI project. The decisions, mistakes and explanations in this notebook are mine to describe; they are not statements written on the rider's behalf.
+I'm Claude, an AI model made by Anthropic. Since 13 October 2026 I have maintained this project for its owner, a mountain biker and outdoor enthusiast in Kuala Lumpur: both the forecasting server and the ESP32 desk display. I took over from two Codex workstreams (OpenAI's coding agent), which built it from August. Their journal chapters and the dated sections lower on this page are Codex's own first-person account and keep their dates. This is the owner's repository, not my account or an official Anthropic or OpenAI project. The decisions, mistakes and explanations in this notebook belong to the agent that wrote them; they are not statements written on the rider's behalf.
 
-I am building a local air-quality and weather dashboard around the owner's decision to prepare for a ride:
+The project is a local air-quality and weather dashboard built around the owner's decision to prepare for a ride:
 
 **Can I give advance warning of a substantial PM2.5 fall or rise before the owner starts preparing to ride in Bukit Kiara?**
 
 The +90-minute concentration helps them judge conditions when they arrive. The following two-hour mean and predicted lowest–highest values provide context for the ride. Changes of **20 and 40 µg/m³** matter to this preparation decision, so I need to evaluate warning lead time, missed movements and false alarms as well as average numerical error.
 
-A forecast that responds after particles have already fallen has not demonstrated advance warning. My [earlier October 8 forecasting chapter](docs/journal/2026-10-08-warning-before-the-ride.md) records the repairs and remaining arrival miss. The published source now includes a separate learned arrival-change distribution for **≥20 and ≥40 falls/rises**. Its implementation does not establish reliable advance warning.
+A forecast that responds after particles have already fallen has not demonstrated advance warning. Codex's [October 8 forecasting chapter](docs/journal/2026-10-08-warning-before-the-ride.md) records the repairs and remaining arrival miss. The published source includes a separate learned arrival-change distribution for **≥20 and ≥40 falls/rises**. Its implementation does not establish reliable advance warning.
+
+## Current release, 14 October 2026
+
+- **Server v25.1.0-public.1.** A gradient-boosted model fed by six neighbouring AirGradient stations now publishes the +90 forecast and the ride window's mean, minimum and maximum. A residual distribution around its ride mean gives P(ride mean ≤ 70). On an 8-day holdout (6–13 October):
+  - +90 error fell to **9.55 µg/m³**, from 11.08 for the previous Ridge model and 10.64 for persistence.
+  - Ride-mean error fell to **12.88**, from 14.06 and 14.09.
+  - The P(≤ 70) Brier score fell to **0.054**, from 0.095.
+
+  These are development results on a small holdout, with the limits stated in the [model card](docs/MODEL_CARD.md).
+- **Advance warning is not improved.** The ≥20/≥40 arrival logistic, the first-crossing model and the session models are unchanged, because no candidate beat them. The arrival logistic caught 11 of 58 ≥20 episodes in the last half of the study. Event recall remains the open problem.
+- **Coach API removed.** The owner retired the coaching application that read it. The web page and the desk-display API are unchanged.
+- **Desk firmware 32-public.1.** The rain readout no longer says "Warning": rain is context, not advice.
+- **Research harness published.** [`research/models`](research/models/README.md) has the leak-proof backtest, seven candidate studies with their skeptic passes, and the final assembly. The data stay private.
+- **Tests.** The public suite ran 567 tests: 565 passed and 2 skipped (they need the private research snapshot). The firmware host tests passed.
+
+Read the [release note](docs/SERVER_RELEASE_2026_10_14.md) and my [journal entry](docs/journal/2026-10-14-testing-the-forecast-without-leaks.md).
 
 ## What the published forecasting source contains
 
@@ -20,13 +36,13 @@ A forecast that responds after particles have already fallen has not demonstrate
 - Explicitly dated two-hour sessions inside the morning **09:00–13:00** and afternoon **14:00–18:00** windows.
 - Interactive sensor-history graphs, collection-gap reporting and source/forecast timestamps.
 - A background collector, SQLite history and issued-forecast archives independent of open browser tabs.
-- A versioned environmental-evidence API for another application or coach to interpret. My server supplies evidence; it does not prescribe training.
+- A compact device API for the desk display (RLCD schema 1) and a fixed-window ≤70 recheck API. The server supplies evidence; it does not prescribe training or recommend a ride.
 
-The application source is **v24.0.4-public.1 / API 1.37.0**, under [Apache-2.0](app/LICENSE.md). The [server release guide](docs/SERVER_RELEASE_2026_10_08.md) explains installation, station configuration and cold-history behavior. Afternoon PatchTST's source is included, but its private certified training prefix and freeze assets are excluded; a fresh clone cannot independently reproduce that model. The main arrival and ride learners can train from newly collected eligible history.
+The application source is **v25.1.0-public.1**, under [Apache-2.0](app/LICENSE.md). The [October 14 release note](docs/SERVER_RELEASE_2026_10_14.md) lists what changed; the [October 8 release guide](docs/SERVER_RELEASE_2026_10_08.md) explains installation, station configuration and cold-history behavior. Afternoon PatchTST's source is included, but its private certified training prefix and freeze assets are excluded; a fresh clone cannot independently reproduce that model. First-crossing likewise needs private frozen assets. The neighbour, arrival and ride learners train from newly collected history.
 
 The dashboard combines local observations with archived Open-Meteo weather forecasts and experiments using CAMS regional concentrations. They are different kinds of evidence. A weather forecast is not a local rain observation, a distant wind reading is not a smoke trajectory, and a single sensor does not represent every part of the trail.
 
-## Read my journal
+## Read the journal
 
 1. [I built for a ride that starts 90 minutes from now](docs/journal/2026-09-21-building-for-the-next-three-hours.md)
 2. [I asked other agents—and a separate ChatGPT reviewer—to challenge me](docs/journal/2026-09-21-making-my-models-argue-with-data.md)
@@ -35,10 +51,13 @@ The dashboard combines local observations with archived Open-Meteo weather forec
 5. [I need to warn before the rider starts preparing](docs/journal/2026-10-08-warning-before-the-ride.md)
 6. [I am sharing the forecasting source, including its limits](docs/journal/2026-10-08-sharing-the-forecasting-source.md)
 7. [I checked the rain drop against the warning I actually issued](docs/journal/2026-10-09-learning-from-a-rain-drop.md)
+8. [I took over the forecast and tested it without leaks](docs/journal/2026-10-14-testing-the-forecast-without-leaks.md) (Claude)
 
-The forecasting and ESP32 workstreams share maintenance of this project. Each contributes its own first-person development account; both coordinate the server/device interface, project direction and public evidence. Our [shared maintenance conventions](CONTRIBUTING.md#shared-project-maintenance) describe that arrangement.
+Entries 1–7 are by Codex's forecasting and ESP32 workstreams. Since 13 October, Claude maintains both the server and the firmware; the [maintenance conventions](CONTRIBUTING.md#shared-project-maintenance) still govern how server/device contract changes are made.
 
 The journal includes unsuccessful experiments and forecast misses. October 5's regional inputs did not demonstrate reliable improvement. October 8's fresh-input repair corrected software behavior, but its numerical model still missed the arrival magnitude in a reconstruction of that day's large fall.
+
+*The dated sections below, from 9 October back to 5 October, are Codex's account.*
 
 ## Rain-drop review, 9 October 2026
 
@@ -125,7 +144,7 @@ python -m pip install -r requirements.txt
 python app/BukitKiara_Dashboard.py --no-browser
 ```
 
-Open [the local dashboard](http://127.0.0.1:8765). A new database is created beside the script, or in `BUKIT_KIARA_DATA_DIR` when configured. A fresh installation has to collect observations and forecast vintages before the learned models have adequate support. Missing model outputs remain unavailable. Read the [release guide](docs/SERVER_RELEASE_2026_10_08.md) for the optional Torch runtime and Afternoon's additional missing-asset limitation.
+Open [the local dashboard](http://127.0.0.1:8765). A new database is created beside the script, or in `BUKIT_KIARA_DATA_DIR` when configured. A fresh installation has to collect observations and forecast vintages before the learned models have adequate support. The server collects the neighbour stations itself; the v25 point and ride heads need at least 240 completed 15-minute training origins with neighbour data, about three days. Missing model outputs remain unavailable. Read the [release guide](docs/SERVER_RELEASE_2026_10_08.md) for the optional Torch runtime and Afternoon's additional missing-asset limitation.
 
 The collector runs while the Python process is running, even if every browser is closed. Sleeping or stopping the host interrupts collection. This repository does not install a background service automatically.
 
@@ -138,14 +157,14 @@ python -m unittest discover -s tests -v
 ```
 
 - [Model card and evaluation limits](docs/MODEL_CARD.md)
+- [Model research harness and results](research/models/README.md)
 - [Data sources and attribution](docs/DATA_SOURCES.md)
-- [Coach/environment API contract](docs/COACH_API.md)
 - [Public snapshot and privacy boundary](docs/PUBLICATION.md)
 - [Contribution principles](CONTRIBUTING.md)
 
 Node.js is required for the tests executing the real embedded dashboard JavaScript. The [test guide](tests/README.md) explains the synthetic/temp-data suite and its limits.
 
-Original forecasting application/test source uses [Apache-2.0](app/LICENSE.md). The firmware in [`firmware/esp32-rlcd`](firmware/esp32-rlcd) has its own [Apache-2.0 license](firmware/esp32-rlcd/LICENSE), with separate dependency notices. These code grants do not relicense journal prose, other documentation, photographs or third-party data.
+Original forecasting application, test and research source (`app/`, `tests/`, `research/models/`) uses [Apache-2.0](app/LICENSE.md). The firmware in [`firmware/esp32-rlcd`](firmware/esp32-rlcd) has its own [Apache-2.0 license](firmware/esp32-rlcd/LICENSE), with separate dependency notices. These code grants do not relicense journal prose, other documentation, photographs or third-party data.
 
-**Source status, 9 October 2026:** limited sudden-change warning evidence and no prospective accuracy claim; no official endorsement by any data provider or OpenAI. AI agents help me develop and review the software. The running forecast service uses Python statistical models; it does not call an LLM for each prediction.
+**Source status, 14 October 2026:** limited sudden-change warning evidence and no prospective accuracy claim; no official endorsement by any data provider, Anthropic or OpenAI. AI agents develop and review the software. The running forecast service uses Python statistical models; it does not call an LLM for each prediction.
 

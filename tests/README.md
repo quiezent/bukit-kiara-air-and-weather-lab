@@ -6,30 +6,20 @@ From the repository root, with the app's runtime dependencies installed:
 python -m unittest discover -s tests -v
 ```
 
-The current 236 tests use generated sensor values, target windows, training
-records and temporary SQLite databases/model files. They require no operational
-database, saved research snapshot, fitted deployment assets, credentials or network.
-Dashboard imports and its tested pure functions run with storage, network,
-server, browser, and thread startup entry points blocked.
+On 14 October 2026 the suite ran **567 tests: 565 passed and 2 skipped**, in about a minute on Python 3.11 with Node.js 24. The two skipped tests compare the server's spatial model with the research model on the private 13 October snapshot. They run only when `TTDI_RESEARCH_DATA` (or `data/` at the repository root) holds that snapshot.
 
-Coverage includes exact issue/target clocks, final-bucket closure, incomplete
-targets, causal receipt-visible inputs, native Ridge/HGB/logistic outputs, nested
-arrival ≥20/≥40 tails, direct concentration publication, unavailable states,
-immutable issue records, Coach/RLCD projection and retained Current observations.
-Node.js is required for the integration checks executing the real embedded web
-JavaScript. Some unrelated heavy models and provider calls are mocked to isolate
-publication seams. This is software verification, not forecast-accuracy evidence.
+The tests use generated sensor values, target windows, training records and temporary SQLite databases and model files. They need no operational database, fitted deployment assets, credentials or network. Node.js is required for the checks that execute the dashboard's real embedded JavaScript. Some heavy models and provider calls are mocked to isolate publication seams.
 
-225 checks come from the current 19-module synthetic production suite: 176 from
-the October 8 release, 41 display/history/contract checks and eight receipt-aware
-numerical training checks. These reproduce later overwrites, cutoff-visible
-labels, partial ledgers and explicit legacy availability. The 11 retained
-checks cover clock, scoring and import/issue contracts. September snapshot tests
-requiring the former afternoon fallback/selection and numerical overlay contract
-were replaced by current direct-publication coverage. Their original source and
-the corresponding old application remain in Git history.
+Coverage includes:
 
-The October 8 release's isolated cold HTTP smoke verified the HTML,
-Current, initializing analysis, JSON Schema and Markdown-guide routes against an
-empty database, with provider networking and background workers disabled. That
-check confirms packaging/initialization, not live collector operation or warning skill.
+- exact issue and target clocks, final-bucket closure and incomplete targets;
+- causal, receipt-visible inputs and receipt-aware training;
+- native Ridge, HGB, spatial-HGB and logistic outputs, and the nested ≥20/≥40 arrival tails;
+- direct concentration publication and unavailable states;
+- the neighbour feature builder and its research parity, and the atomic nightly refit;
+- immutable issue records and SQLite WAL behavior;
+- device (RLCD) projection and retained current observations.
+
+55 modules are ported from the server's own suite, with imports pointed at `app/`. Three are public-only (`test_dashboard_contracts.py`, `test_forecast_clock.py`, `test_fresh_scoring.py`). Five server modules stay private because they need unpublished assets. The [source manifest](../docs/research/2026-10-14-source-release.json) lists them with the reason for each.
+
+Passing tests shows the software does what it says. It is not forecast-accuracy evidence.

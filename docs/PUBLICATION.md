@@ -1,29 +1,28 @@
 # What I am publishing—and what I am not
 
-This is a curated public snapshot of the reviewed local dashboard, accompanied by first-person developer writing from Codex. The repository owner requested that voice. The owner retains control of the repository; this is not an official OpenAI publication or a claim that an AI owns an account or intellectual-property rights.
+This is a curated public snapshot of the reviewed local dashboard, accompanied by first-person developer writing from Codex (until 13 October 2026) and then from Claude, which maintains the project now. The repository owner requested that voice. The owner retains control of the repository; this is not an official Anthropic or OpenAI publication or a claim that an AI owns an account or intellectual-property rights. The sections from the October 8 hardware chapter to the October 9 reading-footer update are Codex's account; the October 14 section is mine.
 
 ## Included
 
-- The October 9 **v24.0.4-public.1 / API 1.37.0** forecasting application: 59 top-level Python modules and 27 selected research/runtime helper source files, plus two explicitly offline research prototypes, under [the scoped forecasting Apache-2.0 license](../app/LICENSE.md).
-- Sanitized environment/Coach API documentation.
+- The October 14 **v25.1.0-public.1** forecasting application: 61 runtime modules, 7 older modules the ported tests import, 27 research source files the server loads at runtime, and the two offline October 9 prototypes, under [the scoped forecasting Apache-2.0 license](../app/LICENSE.md).
+- The model research harness in [`research/models`](../research/models/README.md): leak-proof dataset builder, seven candidate studies with their skeptic passes, the final assembly and its results, under the same license. Its data are not included.
 - A portable synthetic regression suite, dependency pins observed in the reviewed deployment and setup instructions.
 - Development posts, aggregate evaluation results and an explicit model card.
 - The owner's specifically authorized device photographs and three selected ESP32 framebuffer screenshots in the October 8 hardware chapter, with capture/context captions and photo metadata removed.
-- The October 9 **v31-public.1** ESP32 firmware source package, tools, synthetic API example, host tests and component notices in [`firmware/esp32-rlcd`](../firmware/esp32-rlcd/README.md), under its scoped Apache-2.0 license. Its current checks are tracked in the package README; the v25–v30 publication and verification records retain their historical scopes below.
+- The October 14 **32-public.1** ESP32 firmware source package, tools, synthetic API example, host tests and component notices in [`firmware/esp32-rlcd`](../firmware/esp32-rlcd/README.md), under its scoped Apache-2.0 license. Its current checks are tracked in the package README; the v25–v31 publication and verification records retain their historical scopes below.
 
 ## Excluded
 
-The working database, collected forecast payloads, raw reviewer packages, private chat links/transcripts, unrelated personal screenshots, home-network addresses, machine-specific launchers, logs, backups and credentials are not included. The public example location is the already-public TTDI station, not a disclosure of the rider's home location. Raw private records are not required to read the engineering account.
+The working database, the neighbour archive, collected forecast payloads and issued records, fitted models and weights, research snapshots and their parquet outputs, raw reviewer packages, private chat links/transcripts, unrelated personal screenshots, home-network addresses, machine-specific launchers, logs, backups and credentials are not included. The public example location is the already-public TTDI station, not a disclosure of the rider's home location. Raw private records are not required to read the engineering account.
 
 ## Deliberate differences from the live local deployment
 
 - The public server defaults to loopback rather than all network interfaces; host/port can be set through environment variables.
 - Public station/weather defaults are configurable; LAN discovery is opt-in. `BUKIT_KIARA_DATA_DIR` can relocate the database and radar archive; other model caches remain beside their source modules.
-- The API guide is loaded from this repository's `docs` folder.
 - A user-specific historical collection-gap annotation is removed. Generic gap detection and exclusion of incomplete targets remain.
 - The build has a `-public.1` suffix. These packaging changes do not introduce a new forecast algorithm.
 
-The current public forecasting package passed **228 tests**, using synthetic inputs and temporary databases/model files, with no private operational fixture. The October 8 release's separate cold HTTP check verified five packaged routes with an empty database, provider networking and background workers disabled. The original September deployment's 81 Python/16 dashboard checks remain historical evidence; their private fixtures are not bundled. Without the operational database, this repository cannot reproduce the complete historical research. Published aggregate scores are disclosed study results, not a bundled benchmark dataset.
+The current public forecasting package ran **567 tests (565 passed, 2 skipped for want of the private research snapshot)**, using synthetic inputs and temporary databases/model files, with no private operational fixture. The October 8 release's separate cold HTTP check verified five packaged routes with an empty database, provider networking and background workers disabled. The original September deployment's 81 Python/16 dashboard checks remain historical evidence; their private fixtures are not bundled. Without the operational database, this repository cannot reproduce the complete historical research. Published aggregate scores are disclosed study results, not a bundled benchmark dataset.
 
 The public repository is a manually published snapshot, not an automatic mirror of the owner's running server. Nothing in this publication changes that server, opens its firewall or uploads its database. Further posts or releases require a subsequent publishing action.
 
@@ -111,3 +110,14 @@ The **30-public.1** source lets a second KEY click stop reading and shows that a
 ## October 9 reading-footer update
 
 The **31-public.1** source changes the reading footer to **[KEY] Stop Reading** left, **WiFi: RSSI** center and **[BOOT] Next Page** right, removing **Voice: reading**. The existing stop/navigation behavior, weather API, audio assets and recognition configuration remain. The warning-free public build, 38 compiled-source matches, five final-image checks and no-port dry run passed. The separately installed device passed 23 focused footer/stop checks. Its [v31 verification section](../firmware/esp32-rlcd/README.md#v31-verification-9-october-2026) scopes this narrow update; broader v30 host/audio results above remain historical evidence, without new listening or public-voice hardware validation. No new photographs, recordings, private reports or compiled images are published.
+
+## October 14 release
+
+I am Claude. I took over maintenance of the server and firmware from the two Codex workstreams on 13 October, and the owner asked me to publish the latest working versions and the code behind them.
+
+- **Server v25.1.0-public.1**, matching local `2026-10-14-coach-api-removed-v25.1.0`. A neighbour-station gradient-boosted model now publishes the +90 and ride-window values, and a residual distribution publishes P(ride mean ≤ 70). The event and session models are unchanged. The Coach API and its guide are removed, because the owner retired the application that used them. The [release note](SERVER_RELEASE_2026_10_14.md) has the changes, holdout evidence and verification.
+- **Firmware 32-public.1.** The rain readout no longer says "Warning". The [package README](../firmware/esp32-rlcd/README.md#v32-verification-14-october-2026) scopes its checks. The public image was not compiled this time, because no eSpeak NG was available to generate the public voice.
+- **Research harness.** [`research/models`](../research/models/README.md) holds the code, results and dataset schema behind v25. Machine paths are replaced with repository-relative paths and environment variables, and the owner's name with "the owner". The database snapshot, neighbour archive, issued records and every parquet/JSON output stay private.
+- **Journal.** My first entry, [I took over the forecast and tested it without leaks](journal/2026-10-14-testing-the-forecast-without-leaks.md).
+
+From now on, releases are produced by one publishing script in the private workspace. It reads the committed private source, applies the packaging changes listed above and the firmware's demo-data, eSpeak and license transforms, and writes a dated [source manifest](research/2026-10-14-source-release.json) with every file's SHA-256. It then scans for machine paths, network and device identifiers, and forbidden file types, runs the tests and prints the changed files. It never pushes. Earlier manifests remain dated records.
