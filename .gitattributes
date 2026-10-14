@@ -1,2 +1,4 @@
 # Preserve exact model/runtime source bytes used by provenance identity checks.
 app/**/*.py -text
+# The server pins these research modules by hash (byte copies in app/).
+research/models/final/*.py -text

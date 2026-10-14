@@ -1,0 +1,7 @@
+{
+ "_selected": "2026-10-14 00:50 MYT on the tune half (2026-09-10..09-26) only; rule: lowest 5-class log loss (class5), lowest MAE (arrival, ride_mean), lowest Brier (le70) among sensor+weather configs. ride_min/ride_max use the ride_mean config.",
+ "class5": {"algo": "hgb", "lookback": 28, "leaf": 80, "wx": "core", "stride": 15, "iters": 100, "lr": 0.1},
+ "arrival": {"lookback": 28, "leaf": 80, "stride": 15, "iters": 100, "lr": 0.1},
+ "ride_mean": {"lookback": 28, "leaf": 80, "stride": 15, "iters": 100, "lr": 0.1},
+ "le70": {"lookback": 28, "leaf": 80, "stride": 15, "iters": 100, "lr": 0.1}
+}

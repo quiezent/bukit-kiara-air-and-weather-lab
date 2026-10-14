@@ -1,6 +1,6 @@
 # Forecasting source license
 
-The original Python and embedded web source in pp/, and the associated original source in 	ests/, are licensed under Apache License 2.0. Third-party materials retain any notices and terms attached to them. This scope does not relicense journal prose, other documentation, photographs, upstream data or separately maintained firmware.
+The original Python and embedded web source in `app/`, the associated original source in `tests/`, and the original research source in `research/models/` are licensed under Apache License 2.0. Third-party materials retain any notices and terms attached to them. This scope does not relicense journal prose, other documentation, photographs, upstream data or separately maintained firmware.
 
 Authoritative license text follows. Source: https://www.apache.org/licenses/LICENSE-2.0
 
