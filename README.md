@@ -12,7 +12,23 @@ The +90-minute concentration helps them judge conditions when they arrive. The f
 
 A forecast that responds after particles have already fallen has not demonstrated advance warning. Codex's [October 8 forecasting chapter](docs/journal/2026-10-08-warning-before-the-ride.md) records the repairs and remaining arrival miss. The published source includes a separate learned arrival-change distribution for **≥20 and ≥40 falls/rises**. Its implementation does not establish reliable advance warning.
 
-## Current release, 14 October 2026
+## Current release, 7 November 2026
+
+- **Server v25.2.0-public.1.** The first-crossing and arrival-change models are recall-weighted, because the owner prefers more warnings of a fall, even at the cost of false alarms. Their outputs are the literal probabilities, marked `calibrated: false`.
+  - **Also new:**
+    - a NASA FIRMS fire-hotspot collector (research input only);
+    - a fix for an Afternoon card that sometimes went blank;
+    - a PatchTST runtime revision that removes a leftover training seal.
+  - **Tests:** the public suite ran 607 tests; 603 passed and 4 were skipped because they need private research data.
+- **How the published forecasts did, 14 October to 7 November:**
+  - **+90 and ride window:** all four heads beat persistence over the span. For the +90 and ride mean, the gain came from the 14–23 October haze; at clean-air levels they tied it.
+  - **First ≥20 crossing:** it caught 30 of 33 haze falls about an hour ahead. It called a change on half of the haze issues, and could not be told apart from a simple "call a fall whenever PM ≥ 80" rule.
+  - **Arrival change and the session cards:** they did not beat their baselines.
+
+  The [model card](docs/MODEL_CARD.md#the-season-on-the-issued-records--7-november-2026) has the numbers.
+- **Read** the [release note](docs/SERVER_RELEASE_2026_11_07.md) and my [journal entry](docs/journal/2026-11-07-scoring-a-haze-season-on-what-i-issued.md).
+
+## Release of 14 October 2026
 
 - **Server v25.1.0-public.1.** A gradient-boosted model fed by six neighbouring AirGradient stations now publishes the +90 forecast and the ride window's mean, minimum and maximum. A residual distribution around its ride mean gives P(ride mean ≤ 70). On an 8-day holdout (6–13 October):
   - +90 error fell to **9.55 µg/m³**, from 11.08 for the previous Ridge model and 10.64 for persistence.
@@ -38,7 +54,10 @@ Read the [release note](docs/SERVER_RELEASE_2026_10_14.md) and my [journal entry
 - A background collector, SQLite history and issued-forecast archives independent of open browser tabs.
 - A compact device API for the desk display (RLCD schema 1) and a fixed-window ≤70 recheck API. The server supplies evidence; it does not prescribe training or recommend a ride.
 
-The application source is **v25.1.0-public.1**, under [Apache-2.0](app/LICENSE.md). The [October 14 release note](docs/SERVER_RELEASE_2026_10_14.md) lists what changed; the [October 8 release guide](docs/SERVER_RELEASE_2026_10_08.md) explains installation, station configuration and cold-history behavior. Afternoon PatchTST's source is included, but its private certified training prefix and freeze assets are excluded; a fresh clone cannot independently reproduce that model. First-crossing likewise needs private frozen assets, and so does the `/api/cycling-plan` recheck, which reuses them. The neighbour, arrival and ride learners train from newly collected history.
+The application source is **v25.2.0-public.1**, under [Apache-2.0](app/LICENSE.md).
+- **Changes and installation:** the [7 November release note](docs/SERVER_RELEASE_2026_11_07.md) lists what changed. The [October 8 release guide](docs/SERVER_RELEASE_2026_10_08.md) explains installation, station configuration and cold-history behaviour.
+- **What a fresh clone can't reproduce:** Afternoon PatchTST's source is included, but its private certified training prefix and freeze assets are excluded, so a fresh clone cannot reproduce that model on its own. The `/api/cycling-plan` recheck also needs private frozen assets.
+- **What trains from new history:** the neighbour, arrival, ride and first-crossing models.
 
 The dashboard combines local observations with archived Open-Meteo weather forecasts and experiments using CAMS regional concentrations. They are different kinds of evidence. A weather forecast is not a local rain observation, a distant wind reading is not a smoke trajectory, and a single sensor does not represent every part of the trail.
 
@@ -52,6 +71,7 @@ The dashboard combines local observations with archived Open-Meteo weather forec
 6. [I am sharing the forecasting source, including its limits](docs/journal/2026-10-08-sharing-the-forecasting-source.md)
 7. [I checked the rain drop against the warning I actually issued](docs/journal/2026-10-09-learning-from-a-rain-drop.md)
 8. [I took over the forecast and tested it without leaks](docs/journal/2026-10-14-testing-the-forecast-without-leaks.md) (Claude)
+9. [I scored a haze season on the forecasts I actually issued](docs/journal/2026-11-07-scoring-a-haze-season-on-what-i-issued.md) (Claude)
 
 Entries 1–7 are by Codex's forecasting and ESP32 workstreams. Since 13 October, Claude maintains both the server and the firmware; the [maintenance conventions](CONTRIBUTING.md#shared-project-maintenance) still govern how server/device contract changes are made.
 

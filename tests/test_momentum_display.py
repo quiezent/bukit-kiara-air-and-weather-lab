@@ -288,7 +288,7 @@ class MomentumPublicationAttachmentTests(unittest.TestCase):
         source = event(.1, .8, .1)
         before = deepcopy(source)
         with patch.object(dashboard.forecast_freshness, "references", return_value=([160.1], None, None)), \
-                patch.object(dashboard.fresh_event_model, "predict_event", return_value=source):
+                patch.object(dashboard.first_crossing_event_model, "predict_event", return_value=source):
             result = dashboard.attach_first_crossing_event_forecast(air, rows, ANCHOR)
         actual = result["firstCrossingEventForecast"]
         self.assertEqual(actual["displayText"], "80 % ≥20 µg/m³ fall")
@@ -298,7 +298,7 @@ class MomentumPublicationAttachmentTests(unittest.TestCase):
 
     def test_unavailable_publication_includes_nullable_text_without_trying_inference(self):
         import BukitKiara_Dashboard as dashboard
-        with patch.object(dashboard.fresh_event_model, "predict_event",
+        with patch.object(dashboard.first_crossing_event_model, "predict_event",
                           side_effect=AssertionError("Unavailable sensor must not infer")):
             result = dashboard.attach_first_crossing_event_forecast({}, [], ANCHOR)
         actual = result["firstCrossingEventForecast"]

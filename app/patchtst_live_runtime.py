@@ -4,6 +4,11 @@ The original forward/daily freezes continue to reject changed dependencies.
 This separately frozen inference wrapper permits exactly three reviewed input
 readers, verifies preserved original bytes, and never trains or edits an old
 policy. A further input change requires a new declared revision.
+
+Revision v3 changes one thing: the Codex-era sealed evaluation window of the
+original daily_cache.py (Oct 20 - Nov 3) no longer withholds labels or
+training rows in the isolated receipt clone. Codex's sealed protocol was
+retired on 2026-10-13 and the seal starved training from 10-20.
 """
 from __future__ import annotations
 
@@ -20,9 +25,12 @@ from contextlib import closing
 import sqlite3
 import urllib.request
 
-VERSION = "patchtst_live_receipt_inputs_revision_v2"
+VERSION = "patchtst_live_receipt_inputs_revision_v3"
 ROOT = Path(__file__).resolve().parent
-REVISION_DIR = ROOT / "research/patch_dashboard_deployment_20261008/live_receipt_revision_v2"
+REVISION_DIR = ROOT / "research/patch_dashboard_deployment_20261008/live_receipt_revision_v3"
+PREDECESSOR_VERSION = "patchtst_live_receipt_inputs_revision_v2"
+PREDECESSOR_DIR = ROOT / "research/patch_dashboard_deployment_20261008/live_receipt_revision_v2"
+RUNTIME_OVERRIDES = frozenset(("_unsealed",))
 REVISED_INPUTS = frozenset(("afternoon_direction_features.py", "rain_weather_features.py", "window_pm_predictor.py"))
 ADDITIONAL_INPUTS = frozenset(("observation_provenance.py",))
 _LOCK = threading.RLock()
@@ -54,14 +62,21 @@ def verify_runtime(cache, *, revision_dir=None):
             or sealed.get("revisionSha256") != _sha(declaration_path)
             or sealed.get("verifierSha256") != _sha(Path(__file__))):
         raise RuntimeError("Declared live receipt runtime revision differs")
-    predecessor = ROOT / "research/patch_dashboard_deployment_20261008/live_receipt_revision_v1"
+    predecessor = PREDECESSOR_DIR
+    previous = _json(predecessor / "REVISION_FREEZE.json")
     if (declared.get("previousRevisionSha256") != _sha(predecessor / "REVISION.json")
             or declared.get("previousRevisionFreezeSha256") != _sha(predecessor / "REVISION_FREEZE.json")
-            or declared.get("previousVerifierSha256") != _sha(predecessor / "verifier_source.py")):
+            or declared.get("previousVerifierSha256") != _sha(predecessor / "verifier_source.py")
+            or previous.get("version") != PREDECESSOR_VERSION
+            or previous.get("verifierSha256") != declared.get("previousVerifierSha256")):
         raise RuntimeError("Preserved predeployment inference revision changed")
     if (set(declared.get("revisedInputs", {})) != REVISED_INPUTS
             or set(declared.get("additionalInputs", {})) != ADDITIONAL_INPUTS):
         raise RuntimeError("Only the three declared receipt-reader revisions are permitted")
+    retired = declared.get("retiredSealedWindow") or {}
+    if (set(declared.get("permittedRuntimeOverrides", {})) != RUNTIME_OVERRIDES
+            or retired.get("startEpoch") != cache.SEALED_START or retired.get("endEpoch") != cache.SEALED_END):
+        raise RuntimeError("Only the declared sealed-window retirement is permitted")
     if Path(cache.HERE).resolve() != (ROOT / "research/sequence_followup_20261008/forward").resolve():
         raise RuntimeError("Unexpected original daily runtime location")
     here, original = Path(cache.HERE), cache.original
@@ -139,6 +154,29 @@ def _revision_tags(cache):
             "originalDailyPolicySha256": _sha(cache.HERE / "DAILY_POLICY.json"),
             "inputRevisionInvalidatesPreviousIssuedSkill": True,
             "sourceReceiptPolicy": "immutable_available_revision_post_commit_visibility_legacy_unknown"}
+
+
+def _sealed_window_retired(start, end):
+    """Every window is eligible: Codex's sealed protocol was retired on 2026-10-13."""
+    return True
+
+
+def _predecessor_artifact(cache, metadata):
+    """True only for an artifact tagged with exactly the declared v2 revision."""
+    return (metadata.get("liveRuntimeRevision") == PREDECESSOR_VERSION
+            and metadata.get("liveRuntimeRevisionSha256") == _json(PREDECESSOR_DIR / "REVISION_FREEZE.json")["revisionSha256"]
+            and metadata.get("originalDailyPolicySha256") == _sha(cache.HERE / "DAILY_POLICY.json"))
+
+
+def _supersede(checkpoint, metadata_path):
+    """Move a sealed-window v2 artifact aside, bytes unchanged; never adopt it."""
+    target = checkpoint.parent / "superseded" / PREDECESSOR_VERSION
+    target.mkdir(parents=True, exist_ok=True)
+    moved = [(path, target / path.name) for path in (checkpoint, metadata_path)]
+    if any(destination.exists() for _, destination in moved):
+        raise RuntimeError("Superseded daily artifact already preserved; no silent replacement")
+    for source, destination in moved:
+        source.replace(destination)
 
 
 def _clone_source(name, path, expected):
@@ -229,6 +267,9 @@ def get_cache(original_cache=None):
         cache.CACHE = cache.HERE / "receipt_runtime_v2_lifecycle"
         cache._live_receipt_runtime_version = VERSION
         cache.verify_policy = lambda: verify_runtime(cache)
+        # v3's only behavioural change (declared in REVISION.json): label
+        # materialisation and training stop excluding the retired sealed window.
+        cache._unsealed = _sealed_window_retired
         original.verify = lambda: {**_json(original.HERE / "POLICY.json"), **_revision_tags(cache)}
         original.capture = lambda db_path=ROOT / "bukit_kiara_air_history.db", api="http://127.0.0.1:8765": _receipt_capture(cache, db_path, api)
         original_write, atomic = original.write, cache._atomic
@@ -270,10 +311,15 @@ def _adopt_completed_artifact(cache, cutoff, issue_epoch):
     metadata_path = destination.with_suffix(".json")
     if destination.exists() and metadata_path.exists():
         metadata = _json(metadata_path)
-        if (_sha(destination) != metadata.get("checkpointSha256")
+        if _predecessor_artifact(cache, metadata):
+            # Fitted by v2 with the sealed window withheld: preserve it aside,
+            # then adopt the original checkpoint or let the lifecycle refit.
+            _supersede(destination, metadata_path)
+        elif (_sha(destination) != metadata.get("checkpointSha256")
                 or any(metadata.get(key) != value for key, value in _revision_tags(cache).items())):
             raise RuntimeError("Completed revised daily artifact or policy differs")
-        return metadata
+        else:
+            return metadata
     if destination.exists() or metadata_path.exists():
         raise RuntimeError("Incomplete revised daily artifact; no silent replacement")
     if not source.exists() or not source.with_suffix(".json").exists():
@@ -311,7 +357,7 @@ def adopt_completed_artifact(cache, cutoff, issue_epoch):
 
 
 def background_step(db_path, now=None):
-    """New background lifecycle using unchanged sealed daily training math."""
+    """Background lifecycle: unchanged daily training math, retired seal lifted (v3)."""
     cache = get_cache()
     now = time.time() if now is None else float(now)
     cutoff = cache._midnight(now)

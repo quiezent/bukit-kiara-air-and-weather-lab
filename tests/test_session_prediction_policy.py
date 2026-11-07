@@ -203,8 +203,8 @@ class PatchWrapperTests(unittest.TestCase):
         self.assertEqual(sources["cams"],[(ISSUE-60,"Open-Meteo / CAMS Global","{}")])
         self.assertEqual(sources["sourceProvenance"]["weather"][0]["revisionId"],"available-old-revision")
 
-    def run_prediction(self,raw):
-        mark=ISSUE-60
+    def run_prediction(self,raw,mark_age=60,generated_after=2):
+        mark=ISSUE-mark_age
         bundle={"past":np.zeros((1,96,3)),"future":np.zeros((1,26,15)),
                 "context":np.zeros((1,31)),"fresh":np.array([100.])}
         audit={"fresh":100.,"weatherFetchedEpoch":ISSUE-30,"sensorReferenceEpoch":mark,
@@ -229,7 +229,7 @@ class PatchWrapperTests(unittest.TestCase):
                   "readOnly":True,"futureObservedSensorRowsLoaded":0,
                   "sensor":[{"epoch":mark,"pm02":100.}],
                   "weather":[(ISSUE-30,"issued-weather",{})],"cams":[]}
-        with patch.object(patchtst,"_READY",ready),patch.object(patchtst.time,"time",return_value=ISSUE+2), \
+        with patch.object(patchtst,"_READY",ready),patch.object(patchtst.time,"time",return_value=ISSUE+generated_after), \
              patch.object(patchtst.direct,"patch_query",return_value=(bundle,audit)):
             return patchtst.predict_windows(snapshot["sensor"],{"afternoon":{"startEpoch":START,"endEpoch":END}},
                                             ISSUE,snapshot=snapshot,weather_fetched_epoch=ISSUE-30)["afternoon"]
@@ -247,6 +247,16 @@ class PatchWrapperTests(unittest.TestCase):
         self.assertEqual(left["patchtstModel"]["eventThresholdUgM3"],20)
         self.assertEqual(left["patchtstModel"]["checkpointSha256"],"unchanged-original-checkpoint")
         self.assertEqual(left["patchtstModel"]["legacyModelVersion"],patchtst.LEGACY_MODEL_VERSION)
+
+    def test_source_age_is_judged_at_the_issue_clock_not_after_generation(self):
+        # 2026-10-17: a reading 230 s old at issue plus 15 s of inference blanked the card.
+        self.assertTrue(self.run_prediction(80.,mark_age=230,generated_after=15)["available"])
+        self.assertTrue(self.run_prediction(80.,mark_age=240,generated_after=100)["available"])
+        stale=self.run_prediction(80.,mark_age=241,generated_after=2)
+        self.assertFalse(stale["available"])
+        self.assertIsNone(stale["mean"])
+        self.assertIn("stale", stale["reason"])
+        self.assertFalse(self.run_prediction(80.,mark_age=60,generated_after=121)["available"])
 
 
 if __name__=="__main__":

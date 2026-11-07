@@ -224,7 +224,7 @@ class LogisticArrivalDistributionTests(unittest.TestCase):
         result=self.infer()
         with tempfile.TemporaryDirectory() as directory,patch.object(model,'PRIVATE',Path(directory)):
             self.assertTrue(model.record_issued_prediction(result,recorded_epoch=self.issue+25))
-            path=Path(directory)/'arrival-logistic-change-issued-v1.jsonl'
+            path=Path(directory)/'arrival-logistic-change-issued-v2.jsonl'
             saved=json.loads(path.read_text())
             self.assertEqual(saved['issuedCohort']['modelVersion'],model.MODEL_VERSION)
             self.assertEqual(saved['issuedCohort']['trainingCadence'],model.TRAINING_CADENCE)

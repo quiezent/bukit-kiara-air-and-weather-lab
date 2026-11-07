@@ -46,6 +46,7 @@ import rain_pm_forecast
 import radar_shadow
 import regional_pm_inputs
 import neighbor_pm_inputs
+import firms_collector
 import storm_precursor_inputs
 from analysis_delivery import AnalysisDelivery
 import rlcd_api
@@ -57,7 +58,7 @@ import prospective_validation
 import model_output_contracts
 import ride_pm_extrema
 import momentum_display
-import fresh_event_model_v2 as fresh_event_model
+import first_crossing_logistic_model as first_crossing_event_model
 import spatial_point_model
 import arrival_feature_inputs
 import arrival_logistic_model as arrival_change_model
@@ -151,7 +152,7 @@ DRY_CLEARING_MAX_PRECIPITATION = 0.1
 
 POLL_SECONDS = 180       # collect every 3 minutes
 RETENTION_DAYS = 400     # Preserve more than one year for future seasonal validation.
-DASHBOARD_BUILD = "2026-10-14-coach-api-removed-v25.1.0-public.1"
+DASHBOARD_BUILD = "2026-10-14-eager-event-models-v25.2.0-public.1"
 ACTIVE_VALIDATION_RECIPES = {
     "point90": "near_spatial_hgb_arrival_model_direct_v25", "mean90_210": "near_spatial_hgb_mean_model_direct_v25",
     "morningSession": "morning_hgb_model_direct_v21",
@@ -6368,8 +6369,9 @@ def attach_first_crossing_event_forecast(air_window, rows, issue_epoch):
     """
     issue = int(issue_epoch)
     unavailable = {
-        "available": False, "modelVersion": fresh_event_model.MODEL_VERSION,
+        "available": False, "modelVersion": first_crossing_event_model.MODEL_VERSION,
         "experimental": True, "calibrated": False,
+        "recallWeighting": dict(first_crossing_event_model.RECALL_WEIGHTING),
         "forecastIssuedEpoch": issue, "validUntilEpoch": issue + 5400,
         "changeThresholdUgM3": 20, "direction": "unresolved",
         "directionDecision": "three_class_argmax_ties_unresolved",
@@ -6382,7 +6384,7 @@ def attach_first_crossing_event_forecast(air_window, rows, issue_epoch):
         if not len(references) or not math.isfinite(float(references[0])):
             return {**air_window, "firstCrossingEventForecast": unavailable}
         watermark = max(int(row["epoch"]) for row in rows if row["epoch"] <= issue)
-        candidate = fresh_event_model.predict_event(
+        candidate = first_crossing_event_model.predict_event(
             DB_PATH, rows, issue, watermark, float(references[0])
         )
         if not isinstance(candidate, dict):
@@ -8454,7 +8456,7 @@ def analysis_worker(stop_event=None):
             event = (result.get("airWindow") or {}).get("firstCrossingEventForecast")
             if event is not None:
                 try:
-                    fresh_event_model.record_issued_prediction(event, recorded_epoch=int(time.time()),
+                    first_crossing_event_model.record_issued_prediction(event, recorded_epoch=int(time.time()),
                         input_lineage=result.get("inputProvenance"))
                 except Exception as error:
                     print(f"[First-crossing archive] {type(error).__name__}: {error}")
@@ -8722,14 +8724,7 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
     air_window = attach_first_crossing_event_forecast(air_window, rows, reference_epoch)
     air_window["firstCrossingEventForecast"] = {
         **(air_window.get("firstCrossingEventForecast") or {"available": False}),
-        "performanceEvidence": {
-            "state": "development_only", "prospectivelyValidated": False,
-            "modelVersion": fresh_event_model.MODEL_VERSION,
-            "caseCount": 1093, "dateCount": 4, "overlappingIssues": True,
-            "dropDetected": 8, "dropMissed": 58, "dropFalseAlarms": 64,
-            "brierScore": 0.362521, "classPriorBrierScore": 0.291692,
-            "summary": "Four inspected dates: 8 of 66 drops detected, 58 missed and 64 false alarms. Forecast accuracy remains limited; these overlapping historical issues are a development check.",
-        },
+        "performanceEvidence": dict(first_crossing_event_model.PERFORMANCE_EVIDENCE),
     }
     # v25: the spatial neighbour HGB publishes +90, the ride mean/min/max and (E1) the
     # ride-mean <=70 probability from one cached fit and one set of issue-visible inputs.
@@ -8756,22 +8751,8 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
             "forecastIssuedEpoch": reference_epoch, "arrivalEpoch": reference_epoch + 5400,
             "reason": "arrival_input_unavailable", "errorType": type(error).__name__,
         }
-    arrival_change = {**arrival_change, "performanceEvidence": {
-        "state": "chronological_development_only", "prospectivelyValidated": False,
-        "modelVersion": arrival_change_model.MODEL_VERSION,
-        "caseCount": 3232, "dateCount": 34, "overlappingIssues": True,
-        "evaluationDates": ["2026-09-04", "2026-10-07"],
-        "multiclassBrierScore": 0.155885, "classPriorBrierScore": 0.150380,
-        "logLoss": 0.365475, "classPriorLogLoss": 0.371524,
-        "fall40BrierScore": 0.012799, "fall40ClassPriorBrierScore": 0.009861,
-        "evaluationThresholdOnly": 0.10, "thresholdUsedForPublication": False,
-        "fall40PreOnsetEpisodeCount": 9, "fall40PreOnsetSignals": 5,
-        "fall40PreOnsetOwnArrivalPositiveEpisodes": 3,
-        "fall40FalseEndpointWarningClusters": 23,
-        "fall40FalseEndpointWarningIssues": 210,
-        "physicalSupportConstrained": False,
-        "summary": "34 historical dates: at a 10% evaluation threshold, 5 of 9 large-fall episodes had a signal before movement; only 3 matched the warning's own arrival target, with 23 false endpoint-warning clusters. Probability scores are mixed. Reliable advance-warning skill is not established. At low starting concentrations, this classifier can assign small probabilities to drops larger than the starting value.",
-    }}
+    arrival_change = {**arrival_change,
+                      "performanceEvidence": dict(arrival_change_model.PERFORMANCE_EVIDENCE)}
     air_window["arrivalChangeForecast"] = arrival_change
     # This is the final published stage, after the observed-reference refresh.
     # Earlier diagnostic stages retain their own points; no second model fit.
@@ -9121,7 +9102,9 @@ def _compute_analysis(days, as_of_epoch=None, include_trials=True, trial_context
             "experimentalRapidChangeRiskProbabilityThreshold": 0.20,
             "shortHorizonChangeModelVersion": short_horizon_change.MODEL_VERSION,
             "shortHorizonChangeUsedForParticleForecast": False,
-            "firstCrossingEventModelVersion": fresh_event_model.MODEL_VERSION,
+            "firstCrossingEventModelVersion": first_crossing_event_model.MODEL_VERSION,
+            "eventProbabilitiesCalibrated": False,
+            "eventProbabilitiesRecallWeighted": True,
             "arrivalChangeModelVersion": arrival_change_model.MODEL_VERSION,
             "arrivalChangeTarget": "exact_issue_plus90_from_fresh5_reference",
             "firstCrossingEventModelSelected": True,
@@ -9396,11 +9379,12 @@ def first_crossing_model_worker(stop_event=None):
     last_status = None
     while stop_event is None or not stop_event.is_set():
         try:
-            status = fresh_event_model.refresh_model(DB_PATH, int(time.time()))
+            status = first_crossing_event_model.refresh_model(DB_PATH, int(time.time()))
             summary = (status.get("trainingCutoffEpoch"), status.get("available"), status.get("reason"))
             if summary != last_status:
                 print(f"[First-crossing model] {status.get('reason')} | "
                       f"{status.get('trainingIssueCount', 0)} training cases | "
+                      f"{(status.get('featureCache') or {}).get('computedOrigins')} new feature origins | "
                       f"cutoff {iso_from_epoch(status.get('trainingCutoffEpoch'))}")
                 last_status = summary
         except Exception as error:
@@ -9605,6 +9589,9 @@ if __name__ == "__main__":
     ).start()
     threading.Thread(
         target=neighbor_pm_inputs.collector, daemon=True, name="neighbor-pm-collector",
+    ).start()
+    threading.Thread(
+        target=firms_collector.collector, daemon=True, name="firms-collector",
     ).start()
     threading.Thread(target=first_crossing_model_worker, daemon=True, name="first-crossing-model").start()
     threading.Thread(target=arrival_change_model_worker, daemon=True, name="arrival-change-model").start()

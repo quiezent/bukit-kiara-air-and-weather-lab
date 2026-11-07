@@ -185,8 +185,10 @@ def predict_windows(rows, windows, issue_epoch, *, snapshot, weather_fetched_epo
         generated = time.time()
         if not math.isfinite(raw) or not issue <= generated < start or generated - issue > 120:
             raise ValueError("invalid_or_overdue_generated_forecast")
-        if generated - audit["sensorReferenceEpoch"] > 240 or generated - audit["weatherFetchedEpoch"] > 7200:
-            raise ValueError("source_became_stale_during_generation")
+        # Source age is judged at the issue clock, as for every other head; generation time is
+        # bounded separately above. Judging it at `generated` blanked the card ~1.5% of the time.
+        if issue - audit["sensorReferenceEpoch"] > 240 or issue - audit["weatherFetchedEpoch"] > 7200:
+            raise ValueError("source_stale_at_issue")
         fresh = float(audit["fresh"])
         point = raw
         tensor_hash = hashlib.sha256(b"".join(np.ascontiguousarray(bundle[k]).tobytes()

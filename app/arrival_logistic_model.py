@@ -2,6 +2,14 @@
 
 One multinomial classifier on 28 scalar sensor inputs. Only the background
 refresh fits. Request inference copies native mass and its coherent CDF tails.
+
+v2 (2026-10-14, v25.2.0): recall weighting in the training loss only. The owner
+asked the event heads to warn more eagerly; research/backtest/eager/frozen.json
+(variant class5_arrival_f2_r1, chosen on the 09-10..09-23 tune folds for
+5 x missed falls + 2.5 x missed rises + false-call + wrong-way clusters) weights
+both fall classes 2, no change 1 and both rise classes 1, divided by their
+mean. The published mass and its argmax outcome stay literal (no threshold or
+gate), so the probabilities are recall-weighted, not calibrated.
 """
 from __future__ import annotations
 import hashlib
@@ -30,16 +38,55 @@ import fresh_sensor_features as sensor
 ROOT=Path(__file__).resolve().parent
 PRIVATE=ROOT/'private'
 MYT=timezone(timedelta(hours=8))
-MODEL_VERSION='receipt_visible_logistic_arrival_change20_40_v1'
+MODEL_VERSION='receipt_visible_logistic_arrival_change20_40_recall_f2_v2'
 ADAPTER_VERSION='native_logistic_arrival_categorical_tail_adapter_v1'
-ARTIFACT_NAME='arrival-logistic-change20-40-model-v1.pkl'
-STATUS_NAME='arrival-logistic-change20-40-status-v1.json'
+ARTIFACT_NAME='arrival-logistic-change20-40-model-v2.pkl'
+STATUS_NAME='arrival-logistic-change20-40-status-v2.json'
+ISSUE_NAME='arrival-logistic-change-issued-v2.jsonl'
 TRAINING_CADENCE='aligned_five_minute_arrival_origins_v1'
 FEATURE_COLUMNS=tuple(sensor.BASE_FEATURE_COLUMNS)
 CLASSES=(0,1,2,3,4)
 CLASS_NAMES=('fall40','fall20to40','within20','rise20to40','rise40')
 PARAMETERS=dict(C=.1,max_iter=500,solver='lbfgs',class_weight=None,
                 penalty='l2',tol=1e-4,fit_intercept=True,multi_class='multinomial')
+# Recall weights by class (research eager.heads: fall classes 'fall', rise classes 'rise').
+CLASS_SAMPLE_WEIGHTS={0:2.,1:2.,2:1.,3:1.,4:1.}
+RECALL_WEIGHTING={'classWeights':{'fall':2.,'noChange':1.,'rise':1.},
+    'classWeightsByClass':{name:CLASS_SAMPLE_WEIGHTS[c] for c,name in zip(CLASSES,CLASS_NAMES)},
+    'normalisation':'sample weights divided by their mean over the training rows',
+    'appliedIn':'training_loss_only',
+    'selectionObjective':'5 x missed >=20 fall episodes + 2.5 x missed >=20 rise episodes + false-call clusters '
+                         '+ wrong-way clusters (lower is better), tune folds 2026-09-10..09-23',
+    'researchVariant':'class5_arrival_f2_r1','evidence':'research/backtest/eager/frozen.json (2026-10-14)',
+    'note':'probabilities are recall-weighted, not calibrated; the published outcome is the literal argmax'}
+# Research evidence for the published card (research/backtest/eager: final_scores.md, issued_scores.md).
+# The weights were tuned on the research replica, whose sensor inputs use the harness clock rather
+# than this module's receipt clock; 'vs previous' compares with the unweighted v1 as replayed or issued.
+PERFORMANCE_EVIDENCE={
+    'state':'chronological_development_only','prospectivelyValidated':False,'modelVersion':MODEL_VERSION,
+    'evidenceSource':'research/backtest/eager (frozen.json, final_scores.md, issued_scores.md), 2026-10-14',
+    'objective':RECALL_WEIGHTING['selectionObjective'],
+    'finalSpanPostSelection':{'dates':['2026-09-24','2026-10-13'],'caseCount':5618,
+        'fall20Caught':'14/35','previousFall20Caught':'10/35','rise20Caught':'1/26','previousRise20Caught':'1/26',
+        'falseCallClusters':18,'previousFalseCallClusters':15,'wrongWayClusters':6,'previousWrongWayClusters':5,
+        'objective':191.5,'previousObjective':207.5,'objectiveDifferenceCi95':[-42.3,4.8],
+        'neverCallObjective':240.0,'alwaysFallObjective':125.0,
+        'fall40Caught':'3/10','previousFall40Caught':'1/10','rise40Caught':'0/8',
+        'errors40':24,'previousErrors40':25,'neverCallErrors40':18,
+        'logLoss':0.432,'previousLogLoss':0.419},
+    'issuedClocks':{'dates':['2026-10-08','2026-10-13'],'caseCount':1434,'fall20Caught':'2/10','rise20Caught':'1/5',
+        'objective':54.0,'previousAsIssuedObjective':58.0,'neverCallObjective':62.5},
+    # This module's own receipt-clock path, refit daily (research/first20_logistic_v25_2/class5_server_path_eval.py).
+    'serverPathPostSelection':{'dates':['2026-10-06','2026-10-13'],'caseCount':2248,'fall20Caught':'8/19',
+        'previousFall20Caught':'6/19','rise20Caught':'1/14','previousRise20Caught':'1/14','falseCallClusters':12,
+        'previousFalseCallClusters':9,'objective':103.5,'previousObjective':110.5,'calls':249,'previousCalls':132},
+    'overlappingIssues':True,'physicalSupportConstrained':False,
+    'summary':('Recall-weighted (fall classes x2). Sep 24-Oct 13: 14 of 35 falls of 20+ caught (previous model 10) '
+               'with 18 false-call clusters (previous 15); 40+ falls 3 of 10 (previous 1). On the owner\'s objective '
+               'it is not distinguishable from the previous model (191.5 vs 207.5, interval includes 0), and a '
+               'permanent fall alarm scores better (125), so this is the chosen trade-off, not proven skill. '
+               'Probabilities are not calibrated. At low starting concentrations, this classifier can assign '
+               'small probabilities to drops larger than the starting value.')}
 _LOCK=threading.RLock()
 _FIT_LOCK=threading.Lock()
 _RECORD_LOCK=threading.Lock()
@@ -69,7 +116,16 @@ def selected_policy():
             'trainingCutoff':'all_label_support_strictly_before_issue_day_midnight_Asia_Kuala_Lumpur',
             'featureColumns':list(FEATURE_COLUMNS),'weatherFeaturesUsed':False,'neighborNumericFeaturesUsed':False,
             'numericExpectation':'not_identified_by_five_bin_distribution',
+            'recallWeighting':RECALL_WEIGHTING,'publishingThresholdApplied':False,
             'calibrated':False,'numericalSelectionApplied':False}
+
+
+def class_sample_weights(y):
+    """Recall weights by arrival class, divided by their mean (research eager.heads.sample_weights)."""
+    y=np.asarray(y)
+    w=np.ones(len(y))
+    for c,weight in CLASS_SAMPLE_WEIGHTS.items():w[y==c]=weight
+    return w/w.mean() if len(w) else w
 
 
 def _identity():
@@ -101,8 +157,9 @@ def fit_prepared(prepared,cutoff,*,fitted_epoch=None):
     if not np.array_equal(y,label_classes(issues.arrivalDelta.to_numpy(float))):raise ValueError('arrival_label_class_mismatch')
     estimator=make_pipeline(SimpleImputer(strategy='median',add_indicator=True,keep_empty_features=True),
                             StandardScaler(),LogisticRegression(**PARAMETERS))
+    weights=class_sample_weights(y)
     with threadpool_limits(limits=1),warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always');estimator.fit(x,y)
+        warnings.simplefilter('always');estimator.fit(x,y,logisticregression__sample_weight=weights)
     observed=tuple(int(c) for c in estimator.classes_)
     if observed!=tuple(sorted(set(y))):raise ValueError('class_order_mismatch')
     fit_warnings=[{'category':w.category.__name__,'message':str(w.message)} for w in caught]
@@ -124,7 +181,9 @@ def fit_prepared(prepared,cutoff,*,fitted_epoch=None):
               'iterations':estimator.named_steps['logisticregression'].n_iter_.tolist(),
               'fitWarnings':fit_warnings,'convergenceWarningPresent':any(w['category']=='ConvergenceWarning' for w in fit_warnings),
               'scikitLearnVersion':sklearn.__version__,
-              'objective':'direct_regularized_multinomial_five_bin_plus90_arrival_change_distribution'}
+              'recallWeighting':RECALL_WEIGHTING,
+              'normalisedClassWeights':{name:(float(weights[y==c][0]) if (y==c).any() else None) for c,name in zip(CLASSES,CLASS_NAMES)},
+              'objective':'recall_weighted_regularized_multinomial_five_bin_plus90_arrival_change_distribution'}
     return {'modelVersion':MODEL_VERSION,'adapterVersion':ADAPTER_VERSION,'identity':_identity(),
             'columns':columns,'trainingCutoffEpoch':int(cutoff),'metadata':metadata,'estimator':estimator}
 
@@ -191,7 +250,8 @@ def predict_arrival(db_path,rows,issue_epoch,sensor_watermark_epoch,reference_pm
             'target':'exact_issue_plus90_arrival_median_proxy_delta_from_fresh5_reference',
             'arrivalLeadMinutes':90,'changeThresholdsUgM3':[20,40],
             'orderedClassNames':list(CLASS_NAMES),'selectedPolicy':selected_policy(),
-            'prospectivelyValidated':False,'calibrated':False,'numericalSelectionApplied':False,
+            'prospectivelyValidated':False,'calibrated':False,'recallWeighting':RECALL_WEIGHTING,
+            'probabilityRole':'recall_weighted_uncalibrated_experimental','numericalSelectionApplied':False,
             'weatherFeaturesUsed':False,'actualWeatherLearningSupported':False,'neighborNumericFeaturesUsed':False,
             'weatherInputRole':'archived_context_only_not_in_model_feature_vector',
             'arrivalConcentrationExpectation':None,'numericExpectationAvailable':False,
@@ -238,7 +298,7 @@ def predict_arrival(db_path,rows,issue_epoch,sensor_watermark_epoch,reference_pm
 def record_issued_prediction(result,*,output_path=None,recorded_epoch=None,input_lineage=None):
     recorded=int(time.time()) if recorded_epoch is None else int(recorded_epoch);issue=int(result['forecastIssuedEpoch'])
     if not 0<=recorded-issue<=120:raise ValueError('Only fresh actual publication may be recorded as originally issued')
-    path=Path(output_path) if output_path is not None else PRIVATE/'arrival-logistic-change-issued-v1.jsonl'
+    path=Path(output_path) if output_path is not None else PRIVATE/ISSUE_NAME
     identity_hash=hashlib.sha256(json.dumps(result.get('modelIdentity'),sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
     resolved=str(path.resolve());key=(resolved,issue,identity_hash,result.get('featureValuesSha256'),result.get('reason'))
     lineage=dict(input_lineage) if input_lineage is not None else {'status':'not_archived','historicalReceiptTimesUnknown':True}
@@ -247,7 +307,7 @@ def record_issued_prediction(result,*,output_path=None,recorded_epoch=None,input
             'issuedCohort':{'modelVersion':MODEL_VERSION,'adapterVersion':ADAPTER_VERSION,
                            'modelIdentitySha256':identity_hash,'target':result['target'],
                            'arrivalLeadMinutes':90,'changeThresholdsUgM3':[20,40],
-                           'trainingCadence':TRAINING_CADENCE}}
+                           'trainingCadence':TRAINING_CADENCE,'recallWeighting':RECALL_WEIGHTING,'calibrated':False}}
     if 'snapshotId' in lineage:record['inputSnapshotId']=lineage['snapshotId']
     with _RECORD_LOCK:
         path.parent.mkdir(parents=True,exist_ok=True)

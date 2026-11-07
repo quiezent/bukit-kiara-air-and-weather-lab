@@ -23,6 +23,9 @@ INCUMBENT_VERSIONS = {
     "ridge": "fresh_sequence_ridge_delta_numeric_v4_receipt_training_20261009",
     "arrival_logistic": "receipt_visible_logistic_arrival_change20_40_v1",
     "first_crossing": "fresh_sensor_hgb_direct_first20_90min_v2",
+    # v25.2.0 (deployed 2026-10-14 22:08 MYT): recall-weighted replacements of the two event heads.
+    "arrival_logistic_v2": "receipt_visible_logistic_arrival_change20_40_recall_f2_v2",
+    "first_crossing_v25_2": "p1_logistic_first20_90min_recall_f12_r6_v1",
     "cycling70": "ttdi_fixed_ride_window70_live_v1",
     "morning": "morning_hgb_basic31_model_direct_v3",
     "afternoon": "afternoon_patchtst_original_model_direct_v3",
@@ -99,6 +102,8 @@ def ledger(refresh=False) -> pd.DataFrame:
 def jsonl(name: str, fields=None) -> pd.DataFrame:
     """Read an append-only issued JSONL (lines recorded before the snapshot only)."""
     path = config.ISSUED_JSONL_DIR / name
+    if not path.exists():
+        return pd.DataFrame(columns=fields or [])
     records = []
     with path.open("rb") as stream:                         # read only
         for line in stream:
@@ -121,6 +126,9 @@ def jsonl_tables() -> dict:
         "arrival_logistic": jsonl("arrival-logistic-change-issued-v1.jsonl", common + ["classProbabilities"]),
         "first_crossing": jsonl("fresh-event-issued-v2.jsonl",
                                 common + ["probabilityDrop", "probabilityNoCrossing", "probabilityRise"]),
+        "arrival_logistic_v2": jsonl("arrival-logistic-change-issued-v2.jsonl", common + ["classProbabilities"]),
+        "first_crossing_v25_2": jsonl("first20-logistic-issued-v1.jsonl",
+                                      common + ["probabilityDrop", "probabilityNoCrossing", "probabilityRise"]),
         "cycling70": jsonl("cycling-window70-issued.jsonl",
                            common + ["chanceMeanAtOrBelowCutoff", "startEpoch", "endEpoch", "mode"]),
     }

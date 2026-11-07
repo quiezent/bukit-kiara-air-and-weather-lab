@@ -1,8 +1,74 @@
 # Forecast model card
 
-**Current published source:** v25.1.0-public.1, 14 October 2026. The device API is RLCD schema 1; the Coach contract was removed in this release.
+**Current published source:** v25.2.0-public.1, source of 7 November 2026. The device API is RLCD schema 1.
 
-The [October 14 release](SERVER_RELEASE_2026_10_14.md) is the current source; the [October 8 release guide](SERVER_RELEASE_2026_10_08.md) still covers installation. Earlier sections below remain dated research/deployment records; their models, selectors and fallback behavior do not describe the current publisher. Fitted assets, working data and the private Windows service installation are excluded.
+The [7 November release](SERVER_RELEASE_2026_11_07.md) is the current source; the [October 8 release guide](SERVER_RELEASE_2026_10_08.md) still covers installation. The earlier sections below are dated research and deployment records; their models, selectors and fallback behaviour do not describe the current publisher. Fitted assets, working data and the private Windows service installation are excluded.
+
+## The season on the issued records — 7 November 2026
+
+*Written by Claude.*
+
+| Output | Model in v25.2.0 |
+|---|---|
+| +90 concentration, ride mean/min/max | `spatial_hgb_point_p1_no_weather_v25_20261014` (unchanged) |
+| P(ride mean ≤ 70) | `spatial_residual_le70_e1_v25_20261014` (unchanged) |
+| First ≥20 crossing in 90 min | `p1_logistic_first20_90min_recall_f12_r6_v1`: multinomial logistic, class weights drop 12 / none 1 / rise 6 |
+| ≥20/≥40 change by arrival | `receipt_visible_logistic_arrival_change20_40_recall_f2_v2`: both fall classes weighted 2 |
+| Morning / Afternoon | HGB / PatchTST (unchanged; PatchTST runtime revision v3) |
+
+The two event models are **recall-weighted by design and not calibrated**. Their outputs carry `calibrated: false` and the weights used.
+
+**How the scoring was done.** Every model was scored on the forecasts it actually published, from 14 October (event models: 15 October) to 7 November. Each forecast was matched with the outcome the server's own targets define. The method reproduces the 17 October interim scorecard exactly. A second, independent re-computation checked every number and tightened several claims. Intervals are 95% day-block bootstraps. The haze ran from 14 to 23 October, with daily means of 70–136 µg/m³; afterwards they were about 10–55.
+
+| Output vs persistence (MAE, µg/m³) | Whole span (25 days) | Haze, 14–23 Oct | From 24 Oct |
+|---|---|---|---|
+| +90 | 8.45 vs 9.23: **−0.79** [−1.32, −0.27] | −1.91 [−2.67, −1.03] | −0.03 [−0.42, +0.35] |
+| Ride mean | 11.13 vs 12.66: **−1.53** [−2.42, −0.67] | −3.45 [−4.44, −2.25] | −0.21 [−0.86, +0.52] |
+| Ride min | 11.79 vs 14.34: −2.55 [−3.69, −1.51] | −4.89 | −0.95 [−1.52, −0.37] |
+| Ride max | 11.10 vs 13.84: −2.74 [−3.96, −1.53] | −5.27 | −1.01 [−2.12, +0.17] |
+| Morning card (07:15 and 18:05 issues) | 15.62 vs 16.49: −0.86 [−4.72, +2.94] | | |
+| Afternoon card (12:00 and 18:05 issues) | 17.92 vs 17.77: +0.15 [−5.58, +5.49] | | |
+
+**The point model helps when the air is hazy and changing, and only then.**
+- All four heads, the +90 and the ride mean, min and max, also beat damped persistence and a diurnal baseline over the whole span. Corrected for the twelve comparisons, the +90 and ride mean no longer clear damped persistence.
+- After the haze, only the ride minimum stayed ahead of persistence: −0.95 [−1.52, −0.37]. It ties a persistence scaled by the recent ratio of minimum to reference.
+- At reference PM below 35 µg/m³, the +90 and ride mean tie persistence; at 80 and above they win clearly.
+- All four weekly means are negative, but with only four weeks the week-level intervals include zero. One haze episode carries the result.
+- The +90 gain of 0.79 µg/m³ over 25 days falls short of the project's pre-declared bar for a validated improvement: 1.3 µg/m³ over 70 target dates.
+- The ride window's [min, max] contained the realised ride mean in only 42% of issues, and 34% in the haze. These are point forecasts of the extremes, not an interval.
+
+**P(ride mean ≤ 70).**
+- Its Brier score was 0.0557, against 0.0682 for a logistic on the current reading: −0.0125 [−0.0197, −0.0059]. The margin comes from the haze; afterwards 98.9% of rides were at or below 70.
+- On log loss it ties that baseline, because of 22 confident misses at two events: a storm-outflow wash-out on 14 October and a rise on the evening of 17 October.
+
+**First ≥20 crossing (24 issue days, from 15 October).**
+- **During the haze** it caught **30 of 33** falls of 20 µg/m³ or more, with a median lead of about an hour on raw readings. It did so by calling a change on about half of all issues, which left 70 false-alarm and 24 wrong-way clusters in 9 days.
+- **After the haze** it caught 3 of 13.
+- **On the tuning objective it beats never calling:** −113.5 [−183, −51], and it did better on all 9 haze days.
+  - That is a low bar: always calling a fall also beats never calling.
+  - The model cannot be told apart from always calling a fall, or from a hand-written "call a fall whenever PM ≥ 80" reference. Over the 24 days the rule caught 32 of 46 falls and the model 33; in the haze, the rule caught 32 of 33 and the model 30.
+- **Hints that it is more than a level rule:**
+  - It beat all 23 within-day time shifts of its own calls, so the timing of its calls carries information.
+  - A post-hoc check re-counts long false alarms every 90 minutes. There the model is ahead of the PM ≥ 80 rule (−60.5 [−119, −5.5]), but the margin does not survive 3-day blocks.
+- **Drop calls:** they had 9.9× lift below 80 µg/m³ and 1.5× at 80–150. There is no evidence of lift at 150 and above, where it called "drop" 92% of the time.
+- **Probabilities:** as expected from the weighting, its probabilities are worse than simple recent base rates.
+
+**Arrival change (≥20/≥40).**
+- It called a change on 2.3% of issues, and once in the 15 days after the haze.
+- It caught 9 of 39 ≥20 falls and 3 of 14 ≥40, mostly late: its first right call came a median 66 minutes into the episode. If a catch must come at least 30 minutes ahead, its advantage over never calling disappears.
+- Against never calling it is borderline. Its log-loss gain over a 28-day base rate only reflects that base rate lagging the change of regime; it ties 3- and 7-day base rates.
+
+**The Morning and Afternoon cards.**
+- Both tie persistence at their canonical clocks.
+- On every 15-minute issue outside the sealed-window days, the Afternoon card was worse than persistence: +3.5 [+0.6, +6.7]. It is the only Afternoon comparison whose interval excludes zero, and haze days drive it, so it is suggestive.
+- Separating a 10% difference would take roughly 110–380 days, more than one season holds.
+- PatchTST is trained from a single random seed. Retrained with three seeds, its forecasts spread by about 15 µg/m³ (a single reseed moves them about 10). A three-seed average is the obvious next step.
+
+**Limits.**
+- One season, and one 9–10-day haze episode, carry nearly all the events.
+- Many splits were reported, so a few intervals exclude zero by chance.
+- With 3-day blocks and a multiple-testing correction, most of the event-model claims lose significance.
+- Read these results as one season's prospective evidence, not as validation.
 
 ## Spatial point model and P(ride mean ≤ 70) — 14 October 2026
 

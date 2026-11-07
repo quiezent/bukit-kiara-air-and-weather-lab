@@ -234,7 +234,7 @@ console.log(JSON.stringify({visible:!node('arrivalChangeProbabilities').hidden,f
                 publication.enter_context(patch.object(app.analysis_delivery, method, return_value=value))
             for module in (app.window_pm_predictor, app.weather_session_forecast, app.afternoon_xgboost_forecast):
                 publication.enter_context(patch.object(module, "record_issue"))
-            publication.enter_context(patch.object(app.fresh_event_model, "record_issued_prediction"))
+            publication.enter_context(patch.object(app.first_crossing_event_model, "record_issued_prediction"))
             publication.enter_context(patch.object(app.spatial_point_model, "record_issued_le70"))
             writer = publication.enter_context(patch.object(arrival_change_model, "record_issued_prediction", side_effect=write_prediction))
             app.analysis_worker(stop)

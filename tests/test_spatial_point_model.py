@@ -604,7 +604,7 @@ class PublicationWiringTests(unittest.TestCase):
         self.assertEqual((ride["minimum_maximum"]["minimum_ugm3"], ride["minimum_maximum"]["maximum_ugm3"]), (120.5, 160.25))
         self.assertEqual((ride["mean_le70"]["available"], ride["mean_le70"]["probability"], ride["mean_le70"]["model"]),
                          (True, 0.3125, S.LE70_MODEL_VERSION))
-        self.assertEqual(device["dashboard_build"], "2026-10-14-coach-api-removed-v25.1.0-public.1")
+        self.assertEqual(device["dashboard_build"], "2026-10-14-eager-event-models-v25.2.0-public.1")
         self.assertLessEqual(len(json.dumps(device, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode()), 16384)
 
         import jsonschema
@@ -643,7 +643,7 @@ class PublicationWiringTests(unittest.TestCase):
                 publication.enter_context(patch.object(app.analysis_delivery, method, return_value=value))
             for module in (app.window_pm_predictor, app.weather_session_forecast, app.afternoon_xgboost_forecast):
                 publication.enter_context(patch.object(module, "record_issue"))
-            publication.enter_context(patch.object(app.fresh_event_model, "record_issued_prediction"))
+            publication.enter_context(patch.object(app.first_crossing_event_model, "record_issued_prediction"))
             publication.enter_context(patch.object(app.arrival_change_model, "record_issued_prediction"))
             cycling_logistic = publication.enter_context(patch.object(app.cycling_window_live, "record_issued_prediction"))
             writer = publication.enter_context(patch.object(
@@ -673,7 +673,7 @@ class PublicationWiringTests(unittest.TestCase):
         self.assertEqual(payloads[0]["probabilityModelVersion"], S.LE70_MODEL_VERSION)
         self.assertEqual(ledger["freshSensorForecast"]["modelVersion"], S.MODEL_VERSION)
         self.assertEqual(ledger["airWindow"]["cyclingWindowForecast"]["chanceMeanAtOrBelowCutoff"], 0.3125)
-        self.assertEqual(ledger["dashboardBuild"], "2026-10-14-coach-api-removed-v25.1.0-public.1")
+        self.assertEqual(ledger["dashboardBuild"], "2026-10-14-eager-event-models-v25.2.0-public.1")
 
     def test_service_refits_the_spatial_model_and_no_longer_the_ridge(self):
         source = (ROOT / "BukitKiara_Dashboard.py").read_text(encoding="utf-8")
@@ -681,7 +681,7 @@ class PublicationWiringTests(unittest.TestCase):
         self.assertNotIn("fresh_numeric_model_worker", source)
         self.assertNotIn("import fresh_numeric_model_v4", source)
         self.assertFalse(hasattr(self.app, "fresh_numeric_model"))
-        self.assertEqual(self.app.DASHBOARD_BUILD, "2026-10-14-coach-api-removed-v25.1.0-public.1")
+        self.assertEqual(self.app.DASHBOARD_BUILD, "2026-10-14-eager-event-models-v25.2.0-public.1")
 
 
 class CoachApiRemovalTests(unittest.TestCase):
