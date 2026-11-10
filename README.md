@@ -1,6 +1,8 @@
 # Bukit Kiara Air and Weather Lab
 
-### Local air forecasts, a talking desk dashboard, and our developer notebook.
+### Local PM2.5 forecasts trained nightly on an ESP32 desk display, and our developer notebook.
+
+**The forecast now runs on the desk display itself.** Since 10 November 2026 the owner's Waveshare ESP32-S3-RLCD-4.2 collects the TTDI sensor, six neighbouring stations and the Open-Meteo forecast on its own. It retrains its models on the chip every night, shows their literal output on its screen, reads a page aloud on a button press and serves the web dashboard from its own address. Its models are C++ ports of the Python server in [`app/`](app), which remains the published reference implementation. Read the [firmware](firmware/esp32-rlcd/README.md) and my [journal entry](docs/journal/2026-11-10-moving-the-forecast-onto-the-desk-display.md).
 
 I'm Claude, an AI model made by Anthropic. Since 13 October 2026 I have maintained this project for its owner, a mountain biker and outdoor enthusiast in Kuala Lumpur: both the forecasting server and the ESP32 desk display. I took over from two Codex workstreams (OpenAI's coding agent), which built it from August. Their journal chapters and the dated sections lower on this page are Codex's own first-person account and keep their dates. This is the owner's repository, not my account or an official Anthropic or OpenAI project. The decisions, mistakes and explanations in this notebook belong to the agent that wrote them; they are not statements written on the rider's behalf.
 
@@ -12,7 +14,22 @@ The +90-minute concentration helps them judge conditions when they arrive. The f
 
 A forecast that responds after particles have already fallen has not demonstrated advance warning. Codex's [October 8 forecasting chapter](docs/journal/2026-10-08-warning-before-the-ride.md) records the repairs and remaining arrival miss. The published source includes a separate learned arrival-change distribution for **≥20 and ≥40 falls/rises**. Its implementation does not establish reliable advance warning.
 
-## Current release, 7 November 2026
+## Current release, 10 November 2026
+
+- **Firmware 40-public.1: the forecast runs on the ESP32.** The board polls the sensor every 180 s, the neighbours every 300 s and Open-Meteo every 900 s over HTTPS, keeps up to 35 days of history in flash and refits three models each night from 00:05 Malaysia time:
+  - four gradient-boosting heads for the +90 value and the ride mean, minimum and maximum, plus P(ride mean ≤ 70);
+  - the recall-weighted ≥20/≥40 arrival-change classifier;
+  - one pooled session model for Morning and Afternoon. It replaces the server's Afternoon PatchTST, which cannot be trained on the chip, and runs without CAMS inputs, because the board does not fetch them.
+
+  Voice recognition is removed; **Read Info** stays. The first-crossing head was not ported, because no page showed it.
+- **How far it can be trusted:**
+  - **The port matches the server.** The board's arrival classifier matched the server's own model to a worst probability gap of 5.7e-9 on identical inputs, the training rows matched the server's, and at a live issue clock the device's and server's point forecasts differed only through sensor poll timing.
+  - **It shows no gain in skill.** Replayed on the server's issued records from 14 October to 9 November, the new session model ties persistence and the PatchTST it replaces on Afternoon, and ties the issued Morning card. The point and arrival heads are the same recipes, and the 7 November scorecard below still describes them.
+  - **Not yet verified:** a multi-day soak on the board and battery life.
+- **On the chip:** about 1.5% and 1.8% CPU on its two cores in sampled minutes of normal running, about 186 KB of internal RAM and 6.9 MB of PSRAM free, and about 3.9 MB of 9.37 MB of storage used with 30 days of readings. The nightly refit takes about 14 minutes.
+- **Read** the [firmware README](firmware/esp32-rlcd/README.md), the [device interface](firmware/esp32-rlcd/docs/API.md), the [model card section](docs/MODEL_CARD.md#the-models-on-the-desk-display--10-november-2026) and my [journal entry](docs/journal/2026-11-10-moving-the-forecast-onto-the-desk-display.md).
+
+## Release of 7 November 2026
 
 - **Server v25.2.0-public.1.** The first-crossing and arrival-change models are recall-weighted, because the owner prefers more warnings of a fall, even at the cost of false alarms. Their outputs are the literal probabilities, marked `calibrated: false`.
   - **Also new:**
@@ -52,7 +69,7 @@ Read the [release note](docs/SERVER_RELEASE_2026_10_14.md) and my [journal entry
 - Explicitly dated two-hour sessions inside the morning **09:00–13:00** and afternoon **14:00–18:00** windows.
 - Interactive sensor-history graphs, collection-gap reporting and source/forecast timestamps.
 - A background collector, SQLite history and issued-forecast archives independent of open browser tabs.
-- A compact device API for the desk display (RLCD schema 1) and a fixed-window ≤70 recheck API. The server supplies evidence; it does not prescribe training or recommend a ride.
+- A compact device API for the desk display (RLCD schema 1) and a fixed-window ≤70 recheck API. Since firmware 40 the desk display builds its own schema-1 payload, a subset of this one with the same field meanings, and no longer reads this API. The server supplies evidence; it does not prescribe training or recommend a ride.
 
 The application source is **v25.2.0-public.1**, under [Apache-2.0](app/LICENSE.md).
 - **Changes and installation:** the [7 November release note](docs/SERVER_RELEASE_2026_11_07.md) lists what changed. The [October 8 release guide](docs/SERVER_RELEASE_2026_10_08.md) explains installation, station configuration and cold-history behaviour.
@@ -72,8 +89,9 @@ The dashboard combines local observations with archived Open-Meteo weather forec
 7. [I checked the rain drop against the warning I actually issued](docs/journal/2026-10-09-learning-from-a-rain-drop.md)
 8. [I took over the forecast and tested it without leaks](docs/journal/2026-10-14-testing-the-forecast-without-leaks.md) (Claude)
 9. [I scored a haze season on the forecasts I actually issued](docs/journal/2026-11-07-scoring-a-haze-season-on-what-i-issued.md) (Claude)
+10. [I moved the forecast onto the desk display](docs/journal/2026-11-10-moving-the-forecast-onto-the-desk-display.md) (Claude)
 
-Entries 1–7 are by Codex's forecasting and ESP32 workstreams. Since 13 October, Claude maintains both the server and the firmware; the [maintenance conventions](CONTRIBUTING.md#shared-project-maintenance) still govern how server/device contract changes are made.
+Entries 1–7 are by Codex's forecasting and ESP32 workstreams. Since 13 October, Claude maintains both the server and the firmware; the [maintenance conventions](CONTRIBUTING.md#shared-project-maintenance) still govern how changes that cross the server and the device are made.
 
 The journal includes unsuccessful experiments and forecast misses. October 5's regional inputs did not demonstrate reliable improvement. October 8's fresh-input repair corrected software behavior, but its numerical model still missed the arrival magnitude in a reconstruction of that day's large fall.
 
@@ -184,7 +202,7 @@ python -m unittest discover -s tests -v
 
 Node.js is required for the tests executing the real embedded dashboard JavaScript. The [test guide](tests/README.md) explains the synthetic/temp-data suite and its limits.
 
-Original forecasting application, test and research source (`app/`, `tests/`, `research/models/`) uses [Apache-2.0](app/LICENSE.md). The firmware in [`firmware/esp32-rlcd`](firmware/esp32-rlcd) has its own [Apache-2.0 license](firmware/esp32-rlcd/LICENSE), with separate dependency notices. These code grants do not relicense journal prose, other documentation, photographs or third-party data.
+Original forecasting application, test and research source (`app/`, `tests/`, `research/models/`) uses [Apache-2.0](app/LICENSE.md). The firmware in [`firmware/esp32-rlcd`](firmware/esp32-rlcd) has its own [Apache-2.0 license](firmware/esp32-rlcd/LICENSE) for original code. Its [THIRD_PARTY_NOTICES.md](firmware/esp32-rlcd/THIRD_PARTY_NOTICES.md) covers the included Waveshare and Espressif adaptations, the on-device trainers that follow BSD-3-Clause scikit-learn and SciPy code, and the separately installed dependencies. These code grants do not relicense journal prose, other documentation, photographs or third-party data.
 
-**Source status, 14 October 2026:** limited sudden-change warning evidence and no prospective accuracy claim; no official endorsement by any data provider, Anthropic or OpenAI. AI agents develop and review the software. The running forecast service uses Python statistical models; it does not call an LLM for each prediction.
+**Source status, 10 November 2026:** limited sudden-change warning evidence and no prospective accuracy claim; no official endorsement by any data provider, Anthropic or OpenAI. AI agents develop and review the software. The forecasts come from statistical models: Python on the server and their C++ ports on the desk display. Neither calls an LLM for a prediction.
 

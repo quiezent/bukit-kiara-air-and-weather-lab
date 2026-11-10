@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Install the pinned Arduino dependencies into this package's ignored cache."""
+"""Install the pinned Arduino dependencies into this package's ignored cache.
+
+Installs only what the firmware uses: the Arduino-ESP32 core 3.3.12 (ESP-IDF 5.5.5),
+U8g2 2.36.18 and ArduinoJson 7.4.3, and records them in .state/toolchain.json.
+"""
 import argparse
 import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
-import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE = '3.3.12'
 CLI = '1.5.1'
 INDEX = 'https://espressif.github.io/arduino-esp32/package_esp32_index.json'
+LIBRARIES = ('U8g2@2.36.18', 'ArduinoJson@7.4.3')
 
 
 def run(command):
@@ -19,7 +23,7 @@ def run(command):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--arduino-cli', default=shutil.which('arduino-cli'), help='Arduino CLI 1.5.1 executable')
     parser.add_argument('--downloads-dir', type=Path, help='Optional existing Arduino download cache')
     args = parser.parse_args()
@@ -38,20 +42,18 @@ def main():
     config.write_text('board_manager:\n  additional_urls:\n    - ' + INDEX + '\ndirectories:\n'
                       + ''.join('  ' + key + ': ' + json.dumps(path.as_posix()) + '\n'
                                 for key, path in (('data', data), ('downloads', downloads), ('user', user))),
-                      encoding='utf-8')
+                      encoding='utf-8', newline='\n')
     command = [cli, '--config-file', config]
     run([*command, 'core', 'update-index'])
     run([*command, 'core', 'install', 'esp32:esp32@' + CORE])
-    run([*command, 'lib', 'install', 'U8g2@2.36.18', 'ArduinoJson@7.4.3'])
-    sdk = data / 'packages/esp32/tools/esp32s3-libs' / CORE
-    run([sys.executable, ROOT / 'WeatherDashboard/tools/prepare_model.py', '--sdk-dir', sdk])
+    run([*command, 'lib', 'install', *LIBRARIES])
     (state / 'toolchain.json').write_text(json.dumps({
         'arduino_cli': str(cli), 'arduino_cli_version': CLI,
-        'arduino_esp32': CORE, 'esp_idf': '5.5.5', 'esp_sr': '2.5.3',
+        'arduino_esp32': CORE, 'esp_idf': '5.5.5',
         'u8g2': '2.36.18', 'arduino_json': '7.4.3',
         'config': '.state/arduino-cli.yaml',
-    }, indent=2) + '\n', encoding='utf-8')
-    print('Pinned toolchain and original speech-model data prepared. Generate speech clips before building.')
+    }, indent=2) + '\n', encoding='utf-8', newline='\n')
+    print('Pinned toolchain prepared. Generate the speech clips with tools/prepare_speech.py before building.')
 
 
 if __name__ == '__main__':

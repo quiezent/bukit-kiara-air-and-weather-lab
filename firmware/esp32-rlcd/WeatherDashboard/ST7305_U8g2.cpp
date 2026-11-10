@@ -204,6 +204,12 @@ void ST7305_U8g2::begin(uint8_t tile_buf_height, const u8g2_cb_t *rotation)
 
   _spi->begin(_sck, -1, _mosi, -1);
   _spi->beginTransaction(SPISettings(SPI_CLK, MSBFIRST, SPI_MODE0));
+  // The transaction programmed 24 MHz, mode 0, MSB first; those registers stay
+  // set. Ending it releases the SPIClass parameter lock and the bus mutex, so
+  // later transfers lock per call and loopTask holds no mutex between pushes.
+  // Held for life (v34), they kept any priority loopTask inherited (e.g. from
+  // tcpip) and let a busy-polling HTTP parse starve voice-detect.
+  _spi->endTransaction();
 
   u8g2_t *u = u8g2_wrapper.getU8g2();
   u8x8_Setup(u8g2_GetU8x8(u), u8x8_d_st7305_custom, u8x8_dummy_cb, u8x8_byte_custom, u8x8_dummy_cb);

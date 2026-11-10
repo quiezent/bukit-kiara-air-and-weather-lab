@@ -467,8 +467,20 @@
       "text": "Observed status unavailable"
     },
     {
-      "id": "DemoData",
-      "text": "Demonstration data."
+      "id": "GreetingMorning",
+      "text": "Good morning, how can I help you?"
+    },
+    {
+      "id": "GreetingAfternoon",
+      "text": "Good afternoon, how can I help you?"
+    },
+    {
+      "id": "GreetingEvening",
+      "text": "Good evening, how can I help you?"
+    },
+    {
+      "id": "GreetingHi",
+      "text": "Hi, how can I help you?"
     }
   ]
 }

@@ -1,3 +1,7 @@
 esptool==5.3.1
 pyserial==3.5
-zeroconf==0.148.0
+# Host parity tests of the on-device trainers against scikit-learn.
+# numpy 1.26.4 and scikit-learn 1.5.1 publish wheels for Python 3.9-3.12 and scipy 1.14.1 for 3.10-3.13: use Python 3.11 or 3.12.
+numpy==1.26.4
+scipy==1.14.1
+scikit-learn==1.5.1

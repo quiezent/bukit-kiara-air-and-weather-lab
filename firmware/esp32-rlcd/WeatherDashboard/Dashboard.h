@@ -6,6 +6,8 @@
 #include "HistoryGraphs.h"
 #include "ForecastSemantics.h"
 
+constexpr uint8_t kDashboardPageCount = 3;
+
 struct DashboardContext {
   const JsonDocument *weather = nullptr;
   const IndoorReading *indoor = nullptr;
@@ -16,9 +18,16 @@ struct DashboardContext {
   int wifiRssi = 0;
   float batteryV = 0;
   uint8_t page = 0;
-  const char *navigationHint = "Read Info";
-  const char *voiceHint = nullptr;
   bool readoutActive = false;
+  uint32_t nowMs = 0;
+  uint32_t uptimeS = 0;
+  String address;  // The device's own address while Wi-Fi is up, for opening the web page.
+};
+
+// Full-frame push time, measured around sendBuffer() on every draw.
+struct DashboardDisplayTiming {
+  uint32_t sendBufferUsLast = 0;
+  uint32_t sendBufferUsMax = 0;
 };
 
 uint32_t dashboardNow(const DashboardContext &context);
@@ -31,3 +40,4 @@ String dashboardCurrentStatus(const DashboardContext &context);
 String dashboardArrivalStatus(const DashboardContext &context);
 String dashboardFirst20Status(const DashboardContext &context);
 void drawDashboard(U8G2 &gfx, const DashboardContext &context);
+DashboardDisplayTiming dashboardDisplayTiming();

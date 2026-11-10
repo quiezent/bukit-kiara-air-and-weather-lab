@@ -4,11 +4,14 @@
 #include "First20Event.h"
 #include "ArrivalChange.h"
 #include "DashboardTypography.h"
+#include "esp_heap_caps.h"
+#include <new>
 #include <time.h>
 
 namespace {
 using DashboardTypography::text;
 using DashboardTypography::width;
+DashboardDisplayTiming displayTiming;
 String value(JsonVariantConst number, uint8_t decimals = 0) {
   if (number.isNull() || !number.is<float>()) return "--";
   float result = number.as<float>();
@@ -17,6 +20,13 @@ String value(JsonVariantConst number, uint8_t decimals = 0) {
 
 String measured(float number, uint8_t decimals = 1) {
   return isfinite(number) ? String(number, static_cast<unsigned int>(decimals)) : "--";
+}
+
+String uptimeText(uint32_t seconds) {
+  const uint32_t days = seconds / 86400, hours = seconds % 86400 / 3600, minutes = seconds % 3600 / 60;
+  if (days) return String(days) + "d " + String(hours) + "h";
+  if (hours) return String(hours) + "h " + String(minutes) + "m";
+  return String(minutes) + "m";
 }
 
 String clockText(uint32_t epoch, const char *format = "%H:%M") {
@@ -88,9 +98,6 @@ bool sessionAvailable(const DashboardContext &context, JsonVariantConst session)
 }
 
 void heading(U8G2 &gfx, const DashboardContext &context, const char *title) {
-  const bool demo = context.weather && (*context.weather)["demo"].is<bool>()
-      && (*context.weather)["demo"].as<bool>();
-  if (demo) title = "DEMO WEATHER";
   gfx.setDrawColor(1);
   gfx.drawBox(0, 0, 400, 27);
   gfx.setDrawColor(0);
@@ -98,7 +105,7 @@ void heading(U8G2 &gfx, const DashboardContext &context, const char *title) {
   text(gfx, 10, 19, title, 195);
   gfx.setFont(u8g2_font_helvB08_tf);
   text(gfx, 213, 18, clockText(dashboardNow(context), "%a %d %b %H:%M"), 150);
-  text(gfx, 375, 18, String(context.page + 1) + "/3", 25);
+  text(gfx, 375, 18, String(context.page + 1) + "/" + String(kDashboardPageCount), 25);
   gfx.setDrawColor(1);
 }
 
@@ -127,19 +134,6 @@ void footer(U8G2 &gfx, const DashboardContext &context) {
   int labelX = 8 + buttonIconWidth(gfx, "KEY") + 6;
   text(gfx, labelX, 295, context.readoutActive ? "Stop Reading" : "Read Info", signalX - labelX - 8);
   text(gfx, signalX, 295, signal);
-  if (!context.readoutActive && context.voiceHint && context.voiceHint[0]) {
-    String acknowledgement = context.voiceHint;
-    int availableWidth = 392 - signalX - signalWidth - 8;
-    // Fit before positioning so even a long acknowledgement stays right
-    // aligned and leaves a clear gap beside the centered Wi-Fi signal.
-    while (acknowledgement.length() && width(gfx, acknowledgement.c_str()) > availableWidth) {
-      unsigned int last = acknowledgement.length() - 1;
-      while (last && (uint8_t(acknowledgement[last]) & 0xc0) == 0x80) --last;
-      acknowledgement.remove(last);
-    }
-    text(gfx, 392 - width(gfx, acknowledgement.c_str()), 295, acknowledgement, availableWidth);
-    return;
-  }
   int bootWidth = buttonIconWidth(gfx, "BOOT");
   int nextWidth = width(gfx, "Next Page");
   int bootX = 392 - nextWidth - 6 - bootWidth;
@@ -302,14 +296,32 @@ float observationNumber(JsonVariantConst number) {
   return !number.isNull() && number.is<float>() ? number.as<float>() : NAN;
 }
 
+// The history arrays (128 points and 128 gaps, about 3 KB) live in PSRAM,
+// allocated on the first Page 3 draw. On the stack they made a /view page=2
+// request the deepest loop-task path. Drawing reads only the first count.
+struct HistoryBuffers {
+  HistoryPoint points[HISTORY_GRAPH_POINT_LIMIT];
+  HistoryGap gaps[HISTORY_GRAPH_GAP_LIMIT];
+};
+
+HistoryBuffers *historyBuffers() {
+  static HistoryBuffers *buffers = nullptr;
+  if (!buffers) {
+    void *memory = heap_caps_malloc(sizeof(HistoryBuffers), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (memory) buffers = new (memory) HistoryBuffers();
+  }
+  return buffers;
+}
+
 void historyPage(U8G2 &gfx, const DashboardContext &context) {
   heading(gfx, context, "OUTDOOR HISTORY");
   JsonVariantConst history = section(context, "history");
   JsonArrayConst columns = history["columns"];
   bool expectedColumns = columns.size() == 4 && columns[0] == "epoch"
       && columns[1] == "pm25_ugm3" && columns[2] == "temperature_c" && columns[3] == "heat_index_c";
-  HistoryPoint points[HISTORY_GRAPH_POINT_LIMIT];
-  HistoryGap gaps[HISTORY_GRAPH_GAP_LIMIT];
+  HistoryBuffers *buffers = historyBuffers();
+  HistoryPoint *points = buffers ? buffers->points : nullptr;
+  HistoryGap *gaps = buffers ? buffers->gaps : nullptr;
   HistorySeries series;
   series.points = points;
   series.gaps = gaps;
@@ -320,7 +332,7 @@ void historyPage(U8G2 &gfx, const DashboardContext &context) {
   series.nowEpoch = dashboardNow(context);
   series.gapThresholdSeconds = history["gap_after_s"].as<uint32_t>();
   if (!series.gapThresholdSeconds) series.gapThresholdSeconds = 600;
-  series.available = expectedColumns && history["available"].as<bool>();
+  series.available = buffers && expectedColumns && history["available"].as<bool>();
   series.fresh = history["fresh"].as<bool>();
   series.pmSummary = dashboardHistoryPmSummary(context);
   if (series.available) {
@@ -346,10 +358,15 @@ void historyPage(U8G2 &gfx, const DashboardContext &context) {
   gfx.setFont(u8g2_font_helvB08_tf);
   text(gfx, 12, 252, "Indoor T " + (indoor.valid ? measured(indoor.temperatureC) : String("--"))
       + "C | Range " + measured(indoor.minimumC) + "-" + measured(indoor.maximumC) + "C");
+  // The indoor ranges cover the time since the last restart, so the row states that time.
+  const int addressWidth = context.address.length() ? width(gfx, context.address.c_str()) : 0;
+  if (addressWidth) text(gfx, 388 - addressWidth, 271, context.address, addressWidth);
   text(gfx, 12, 271, "RH " + (indoor.valid ? measured(indoor.humidityPct, 0) : String("--"))
-      + "% | " + measured(indoor.minimumHumidity, 0) + "-" + measured(indoor.maximumHumidity, 0) + "% since reset");
+      + "% | " + measured(indoor.minimumHumidity, 0) + "-" + measured(indoor.maximumHumidity, 0) + "% | Up "
+      + uptimeText(context.uptimeS), addressWidth ? 376 - addressWidth - 12 : 376);
   footer(gfx, context);
 }
+
 }
 
 uint32_t dashboardNow(const DashboardContext &context) {
@@ -450,5 +467,13 @@ void drawDashboard(U8G2 &gfx, const DashboardContext &context) {
   if (context.page == 1) sports(gfx, context);
   else if (context.page == 2) historyPage(gfx, context);
   else overview(gfx, context);
+  const uint32_t started = micros();
   gfx.sendBuffer();
+  displayTiming.sendBufferUsLast = micros() - started;
+  if (displayTiming.sendBufferUsLast > displayTiming.sendBufferUsMax)
+    displayTiming.sendBufferUsMax = displayTiming.sendBufferUsLast;
+}
+
+DashboardDisplayTiming dashboardDisplayTiming() {
+  return displayTiming;
 }

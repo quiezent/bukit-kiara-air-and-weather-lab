@@ -121,7 +121,10 @@ enum class SpeechClip : uint16_t {
   ObservedRapidReduction,
   LatestSensorReading,
   ObservedStatusUnavailable,
-  DemoData,
+  GreetingMorning,
+  GreetingAfternoon,
+  GreetingEvening,
+  GreetingHi,
   Count
 };
 

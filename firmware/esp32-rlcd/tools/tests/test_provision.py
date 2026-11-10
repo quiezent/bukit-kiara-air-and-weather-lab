@@ -82,11 +82,24 @@ class FakeSerial:
         return self.lines.popleft() if self.lines else b""
 
 
-def status(ssid="synthetic-network", **changes):
-    result = {"firmware": "synthetic-test", "connected": True,
-              "credentials_saved": True, "ssid": ssid}
+def status(connected=True, **changes):
+    """A v40 STATUS line: Wi-Fi state is nested and carries no network name."""
+    result = {"firmware": "synthetic-test", "uptime_s": 7,
+              "wifi": {"connected": connected, "rssi": -60, "power_save": 1}}
     result.update(changes)
     return json.dumps(result).encode("utf-8") + b"\n"
+
+
+def event(name, **fields):
+    return json.dumps({"event": name, **fields}).encode("utf-8") + b"\n"
+
+
+CONNECTING = event("wifi_connecting")
+
+
+def answer_status(port, command):
+    if command == b"STATUS\n":
+        port.lines.append(status())
 
 
 class ProvisionTests(unittest.TestCase):
@@ -123,7 +136,7 @@ class ProvisionTests(unittest.TestCase):
     def test_wifi_uses_hidden_password_and_utf8_hex_without_host_lookup(self):
         ssid, password = "山地🌦", "秘密-mock-only"
         with self.invoke(["wifi", "--port", "MOCK", "--ssid", ssid],
-                         lines=[status(ssid)], password=password) as run:
+                         lines=[CONNECTING, status()], password=password) as run:
             provision.main()
             expected = f"WIFI {ssid.encode('utf-8').hex()} {password.encode('utf-8').hex()}\n".encode("ascii")
             self.assertEqual([data for _, data in run.port.writes], [expected])
@@ -132,7 +145,7 @@ class ProvisionTests(unittest.TestCase):
             output = run.stdout.getvalue() + run.stderr.getvalue()
             self.assertNotIn(password, output)
             self.assertNotIn(password.encode("utf-8").hex(), output)
-            self.assertEqual(json.loads(run.stdout.getvalue())["ssid"], ssid)
+            self.assertTrue(json.loads(run.stdout.getvalue())["wifi"]["connected"])
             run.constructor.assert_called_once_with(port=None, baudrate=115200, timeout=0.5)
             self.assertEqual(run.port.open_settings, ("MOCK", False, False))
             self.assertEqual(run.port.reset_count, 1)
@@ -140,7 +153,7 @@ class ProvisionTests(unittest.TestCase):
 
     def test_open_network_uses_empty_password_marker_and_no_password_prompt(self):
         with self.invoke(["wifi", "--port", "/dev/mock", "--open-network"],
-                         lines=[status()]) as run:
+                         lines=[CONNECTING, status()]) as run:
             provision.main()
             run.prompt.assert_not_called()
             run.network_prompt.assert_called_once_with("2.4 GHz Wi-Fi network name: ")
@@ -149,28 +162,35 @@ class ProvisionTests(unittest.TestCase):
             self.assertTrue(run.port.closed)
 
     def test_quiet_wifi_port_polls_status_and_recovers(self):
-        def reply_to_poll(port, command):
-            if command == b"STATUS\n":
-                port.lines.append(status())
+        def reply(port, command):
+            if command.startswith(b"WIFI "):
+                port.lines.append(CONNECTING)
+            else:
+                answer_status(port, command)
 
         with self.invoke(["wifi", "--port", "MOCK", "--ssid", "synthetic-network", "--timeout", "12"],
-                         on_write=reply_to_poll) as run:
+                         on_write=reply) as run:
             provision.main()
             self.assertEqual(run.port.writes[1], (7.0, b"STATUS\n"))
             self.assertGreaterEqual(run.port.read_count, 11)
-            self.assertTrue(json.loads(run.stdout.getvalue())["connected"])
+            self.assertTrue(json.loads(run.stdout.getvalue())["wifi"]["connected"])
             self.assertTrue(run.port.closed)
 
     def test_boot_logs_and_non_object_json_do_not_suppress_status_poll(self):
-        def reply_to_poll(port, command):
-            if command == b"STATUS\n":
-                port.lines.append(status())
-
         noise = [b"boot log\n", b"\xffnot JSON\n", b"[]\n", b"null\n", b"7\n"]
-        with self.invoke(["wifi", "--port", "MOCK", "--ssid", "synthetic-network", "--timeout", "12"],
-                         lines=noise, on_write=reply_to_poll) as run:
+        polls = []
+
+        def answer_second_status(port, command):
+            polls.append(command)
+            if len(polls) > 1:
+                answer_status(port, command)
+
+        with self.invoke(["status", "--port", "MOCK", "--timeout", "12"],
+                         lines=noise, on_write=answer_second_status) as run:
             provision.main()
-            self.assertEqual(run.port.writes[1], (7.0, b"STATUS\n"))
+            # The STATUS command at 2 s finds only noise; the 7 s poll is answered.
+            self.assertEqual(run.port.writes, [(2.0, b"STATUS\n"), (7.0, b"STATUS\n")])
+            self.assertEqual(json.loads(run.stdout.getvalue())["firmware"], "synthetic-test")
             self.assertTrue(run.port.closed)
 
     def test_quiet_status_timeout_retries_and_closes_port(self):
@@ -183,29 +203,78 @@ class ProvisionTests(unittest.TestCase):
             self.assertEqual(run.stdout.getvalue(), "")
             self.assertTrue(run.port.closed)
 
-    def test_wifi_waits_for_connected_saved_matching_ssid(self):
-        def reply_to_poll(port, command):
-            if command == b"STATUS\n":
-                port.lines.append(status())
-
-        lines = [status(connected=False), status(credentials_saved=False),
-                 status(ssid="other-synthetic-network"),
-                 b'{"firmware":"synthetic-test","connected":true}\n']
-        with self.invoke(["wifi", "--port", "MOCK", "--ssid", "synthetic-network", "--timeout", "12"],
-                         lines=lines, on_write=reply_to_poll) as run:
+    def test_wifi_accepts_only_a_connected_status_after_joining_starts(self):
+        # A connected status from before the WIFI command took effect, and a
+        # disconnected one after it, are not success.
+        lines = [status(), event("ready", firmware="synthetic-test", engine=True), CONNECTING,
+                 status(connected=False), event("wifi_retry"), b'{"firmware":"synthetic-test","wifi":{}}\n',
+                 status(uptime_s=40)]
+        with self.invoke(["wifi", "--port", "MOCK", "--ssid", "synthetic-network"], lines=lines) as run:
             provision.main()
-            self.assertEqual(run.port.writes[1][1], b"STATUS\n")
-            self.assertEqual(json.loads(run.stdout.getvalue())["ssid"], "synthetic-network")
+            self.assertEqual(json.loads(run.stdout.getvalue())["uptime_s"], 40)
+            self.assertEqual(run.port.read_count, len(lines))
             self.assertTrue(run.port.closed)
 
-    def test_status_scan_and_discover_send_only_the_requested_command(self):
-        for action, line in (("status", status()), ("discover", status()),
-                             ("scan", b'{"networks":[{"ssid":"synthetic-network"}]}\n')):
-            with self.subTest(action=action), self.invoke([action, "--port", "MOCK"], lines=[line]) as run:
+    def test_wifi_failures_reported_by_the_device_stop_the_wait(self):
+        for error in ("wifi_timeout", "wifi_save_failed", "wifi_arguments"):
+            line = json.dumps({"error": error}).encode() + b"\n"
+            with self.subTest(error=error), self.invoke(
+                    ["wifi", "--port", "MOCK", "--ssid", "synthetic-network"], lines=[CONNECTING, line]) as run:
+                with self.assertRaisesRegex(SystemExit, "Device reported: " + error):
+                    provision.main()
+                self.assertEqual(run.stdout.getvalue(), "")
+                self.assertTrue(run.port.closed)
+
+    def test_event_commands_are_sent_once_and_print_their_acknowledgement(self):
+        cases = ((["view", "--page", "2"], b"VIEW 2\n", event("view")),
+                 (["view", "--page", "0"], b"VIEW 0\n", event("view")),
+                 (["readinfo"], b"READINFO\n", event("readout", started=True, page=1, error="")),
+                 (["refresh"], b"REFRESH\n", event("refresh")),
+                 (["seed"], b"SEED\n", event("seed_open")))
+        for arguments, command, reply in cases:
+            with self.subTest(command=command), self.invoke([*arguments, "--port", "MOCK"],
+                                                            lines=[reply]) as run:
                 provision.main()
-                self.assertEqual([data for _, data in run.port.writes], [action.upper().encode() + b"\n"])
+                self.assertEqual([data for _, data in run.port.writes], [command])
+                self.assertEqual(json.loads(run.stdout.getvalue()), json.loads(reply))
                 run.prompt.assert_not_called()
                 self.assertTrue(run.port.closed)
+
+    def test_readinfo_that_cannot_start_reports_the_player_error(self):
+        reply = event("readout", started=False, page=0, error="audio_busy")
+        with self.invoke(["readinfo", "--port", "MOCK"], lines=[reply]) as run:
+            with self.assertRaisesRegex(SystemExit, "Read Info did not start: audio_busy"):
+                provision.main()
+            self.assertTrue(run.port.closed)
+
+    def test_readinfo_answered_by_status_alone_means_no_readout_started(self):
+        with self.invoke(["readinfo", "--port", "MOCK"], on_write=answer_status) as run:
+            provision.main()
+            self.assertEqual([data for _, data in run.port.writes], [b"READINFO\n", b"STATUS\n"])
+            self.assertIn("No readout started", run.stdout.getvalue())
+            self.assertTrue(run.port.closed)
+
+    def test_unacknowledged_command_fails_once_status_answers(self):
+        with self.invoke(["refresh", "--port", "MOCK"], on_write=answer_status) as run:
+            with self.assertRaisesRegex(SystemExit, "did not acknowledge REFRESH"):
+                provision.main()
+            self.assertEqual([data for _, data in run.port.writes], [b"REFRESH\n", b"STATUS\n"])
+            self.assertTrue(run.port.closed)
+
+    def test_older_firmware_reports_unknown_commands(self):
+        with self.invoke(["seed", "--port", "MOCK"], lines=[b'{"error":"unknown_command"}\n']) as run:
+            with self.assertRaisesRegex(SystemExit, "Device reported: unknown_command"):
+                provision.main()
+            self.assertTrue(run.port.closed)
+
+    def test_page_and_retired_actions_are_validated_before_opening_port(self):
+        for arguments in (["view"], ["view", "--page", "3"], ["view", "--page", "-1"],
+                          ["status", "--page", "1"], ["scan"], ["discover"], ["key"]):
+            with self.subTest(arguments=arguments), self.invoke([*arguments, "--port", "MOCK"]) as run:
+                with self.assertRaises(SystemExit) as failure:
+                    provision.main()
+                self.assertEqual(failure.exception.code, 2)
+                run.constructor.assert_not_called()
 
     def test_device_error_closes_port_without_printing_credentials(self):
         with self.invoke(["wifi", "--port", "MOCK", "--ssid", "synthetic-network"],

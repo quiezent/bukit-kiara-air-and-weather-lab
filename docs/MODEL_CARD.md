@@ -1,8 +1,50 @@
 # Forecast model card
 
-**Current published source:** v25.2.0-public.1, source of 7 November 2026. The device API is RLCD schema 1.
+**Current published source:** firmware 40-public.1 of 10 November 2026, which runs the forecast on the ESP32 desk display, and server v25.2.0-public.1 of 7 November 2026, the reference implementation its models were ported from. Both publish RLCD schema 1 field meanings.
 
-The [7 November release](SERVER_RELEASE_2026_11_07.md) is the current source; the [October 8 release guide](SERVER_RELEASE_2026_10_08.md) still covers installation. The earlier sections below are dated research and deployment records; their models, selectors and fallback behaviour do not describe the current publisher. Fitted assets, working data and the private Windows service installation are excluded.
+The [firmware package](../firmware/esp32-rlcd/README.md) and the [7 November release](SERVER_RELEASE_2026_11_07.md) are the current sources; the [October 8 release guide](SERVER_RELEASE_2026_10_08.md) still covers server installation. The earlier sections below are dated research and deployment records; their models, selectors and fallback behaviour do not describe the current publisher. Fitted assets, working data and the private Windows service installation are excluded.
+
+## The models on the desk display — 10 November 2026
+
+*Written by Claude.*
+
+The owner's Waveshare ESP32-S3-RLCD-4.2 now collects its own data and retrains every model on the chip each night, from 00:05 Malaysia time. The nightly refit takes about 13.9 minutes, and the forecasts read unavailable until it finishes. Every output is the model's literal output, and a missing output is shown as unavailable. The PM2.5 values carry `role: raw_model_output` and `calibrated: false`; the arrival-change and P(ride mean ≤ 70) objects carry neither field, and the arrival probabilities come from a recall-weighted fit.
+
+| Output | Model on the device | Server model it follows |
+|---|---|---|
+| +90 concentration; ride mean, min and max | Four histogram gradient-boosting regressors, absolute-error loss (120 iterations, learning rate 0.1, 15 leaves, min 60 per leaf, L2 1.0, no early stopping); 81 inputs: 28 sensor, 4 control, 5 time, 18 neighbour-station, 10 network, 16 issued-wind; 15-minute origins over 28 days (about 2,630–2,670 rows); about 655 s | `spatial_hgb_point_p1_no_weather_v25_20261014` |
+| P(ride mean ≤ 70) | Out-of-fold ride-mean residuals over three day blocks | `spatial_residual_le70_e1_v25_20261014` |
+| ≥20/≥40 change by arrival | `device_arrival_logistic_recall_f2_v2`: median imputer with missing indicators, standard scaler, multinomial logistic (C = 0.1, L-BFGS, max 500 iterations, tol 1e-4), both fall classes weighted 2; 28 sensor inputs at 5-minute issues over 28 days, rebuilt from stored readings (8,019 rows, 59 iterations at the 10 November cutoff); about 157 s | `receipt_visible_logistic_arrival_change20_40_recall_f2_v2` |
+| Morning (09:00–11:00) and Afternoon (14:00–16:00) | `device_session_pooled_hgb_v1`: one pooled gradient-boosting regressor (100 iterations, learning rate 0.05, 7 leaves, min 80 per leaf, L2 50, depth 3, absolute error); 14 days, 7 lead times, 28 of the server Morning model's 31 inputs (4,505 rows at the 10 November cutoff); about 19 s | Server Morning HGB; replaces the Afternoon PatchTST |
+| First ≥20 crossing | Not on the device: no page showed it, so it was not ported | `p1_logistic_first20_90min_recall_f12_r6_v1` |
+
+**The Afternoon replacement.** The server's Afternoon card is a PatchTST network, which cannot be trained on this chip. The device instead serves both session cards from one pooled gradient-boosting model built on the server's Morning recipe.
+
+**The CAMS gap.** The device does not fetch Open-Meteo's CAMS air-quality feed. The session model's three CAMS inputs are therefore missing, and its imputer drops them, as scikit-learn drops a column with no observed value.
+
+**Not models.** The observed status line is the server's rule-based observation label, recomputed on the device from the last 24 hours. Tennis Morning, rain chance, feels-like temperature and wind come straight from the Open-Meteo forecast.
+
+**Evidence that the port is correct.** These checks establish software agreement with the server, not forecast skill.
+- The C++ gradient-boosting trainer reproduced scikit-learn 1.5.1's `HistGradientBoostingRegressor` on the host in 64-bit arithmetic; the device also trains in double precision.
+- With identical inputs, the device's own fitted arrival classifier and the server's pickled model for the same cutoff (8,019 rows, 59 iterations) agreed to a worst probability gap of 5.7e-9.
+- A host harness built from the firmware's row builders reproduced the server's training rows. Arrival: the same issues, identical labels, inputs within 2.8e-14. Session: the same 4,505 rows, inputs within 1e-9 apart from the missing CAMS inputs.
+- At one issue clock on 10 November, device against server: +90 45.04 vs 46.43 µg/m³; ride mean 44.04 vs 46.14; ride min–max 39.3–59.1 vs 42.1–57.4; P(mean ≤ 70) 0.955 vs 0.943; arrival within-20 0.923 vs 0.929, both "No change on arrival"; Morning 32.16 vs 32.11; Afternoon 29.14 vs 27.43 (a different model). The point differences come from sensor poll timing.
+
+**Evidence on skill.** Scored on the server's issued records, 14 October to 9 November; MAE differences in µg/m³ with 95% intervals.
+
+| Comparison | Difference |
+|---|---|
+| Device session model vs persistence, Afternoon 15-minute slots | −0.26 [−2.44, +2.42]: tie |
+| Device session model vs the issued PatchTST, Afternoon 15-minute slots | −1.08 [−4.69, +2.74]: tie |
+| Device session model (28 inputs) vs the issued Morning card | +0.22 [−1.01, +1.38]: tie |
+| Cost of dropping CAMS, Afternoon 15-minute slots | +1.60 [+0.45, +2.89] |
+
+The CAMS row is a secondary comparison; read it as a hint that the missing feed costs something on Afternoon, not as an established loss. The point and arrival heads are the server's recipes, so the [season's scorecard](#the-season-on-the-issued-records--7-november-2026) applies to them. The phe point heads beat persistence over the season, mostly through the 14–23 October haze; afterwards the +90 and ride mean tied it and only the ride minimum stayed ahead. The arrival head did not beat its baselines.
+
+**Limits.**
+- The skill comparisons are replays on server records over one season, not scores of the device's own issued forecasts. The board does not yet record its issued forecasts, so none can be scored yet.
+- A multi-day soak of the standalone firmware has not been run yet.
+- Every hyperparameter and weight was tuned for the TTDI sensor. At another station the models are untested, and each head needs its history to fill first: about 3 days for the point heads, 10 days for the arrival and session models, and 14–28 days for their full training windows.
 
 ## The season on the issued records — 7 November 2026
 

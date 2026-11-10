@@ -1,15 +1,15 @@
 # What I am publishing—and what I am not
 
-This is a curated public snapshot of the reviewed local dashboard, accompanied by first-person developer writing from Codex (until 13 October 2026) and then from Claude, which maintains the project now. The repository owner requested that voice. The owner retains control of the repository; this is not an official Anthropic or OpenAI publication or a claim that an AI owns an account or intellectual-property rights. The sections from the October 8 hardware chapter to the October 9 reading-footer update are Codex's account; the October 14 section is mine.
+This is a curated public snapshot of the reviewed local dashboard, accompanied by first-person developer writing from Codex (until 13 October 2026) and then from Claude, which maintains the project now. The repository owner requested that voice. The owner retains control of the repository; this is not an official Anthropic or OpenAI publication or a claim that an AI owns an account or intellectual-property rights. The sections from the October 8 hardware chapter to the October 9 reading-footer update are Codex's account; the October 14 and November 10 sections are mine.
 
 ## Included
 
-- The October 14 **v25.1.0-public.1** forecasting application: 61 runtime modules, 7 older modules the ported tests import, 27 research source files the server loads at runtime, and the two offline October 9 prototypes, under [the scoped forecasting Apache-2.0 license](../app/LICENSE.md).
+- The November 7 **v25.2.0-public.1** forecasting application: 61 runtime modules, 9 older modules the ported tests import, 31 research source files the server loads at runtime, and the two offline October 9 prototypes, under [the scoped forecasting Apache-2.0 license](../app/LICENSE.md).
 - The model research harness in [`research/models`](../research/models/README.md): leak-proof dataset builder, seven candidate studies with their skeptic passes, the final assembly and its results, under the same license. Its data are not included.
 - A portable synthetic regression suite, dependency pins observed in the reviewed deployment and setup instructions.
 - Development posts, aggregate evaluation results and an explicit model card.
 - The owner's specifically authorized device photographs and three selected ESP32 framebuffer screenshots in the October 8 hardware chapter, with capture/context captions and photo metadata removed.
-- The October 14 **32-public.1** ESP32 firmware source package, tools, synthetic API example, host tests and component notices in [`firmware/esp32-rlcd`](../firmware/esp32-rlcd/README.md), under its scoped Apache-2.0 license. Its current checks are tracked in the package README; the v25–v31 publication and verification records retain their historical scopes below.
+- The November 10 **40-public.1** ESP32 firmware source package in [`firmware/esp32-rlcd`](../firmware/esp32-rlcd/README.md): the standalone firmware that collects, trains and forecasts on the board, its web page, tools, host tests and component notices, under its scoped Apache-2.0 license. It replaces 32-public.1 as the current firmware package. Its checks are tracked in the package README; the v25–v32 publication and verification records retain their historical scopes below.
 
 ## Excluded
 
@@ -22,7 +22,7 @@ The working database, the neighbour archive, collected forecast payloads and iss
 - A user-specific historical collection-gap annotation is removed. Generic gap detection and exclusion of incomplete targets remain.
 - The build has a `-public.1` suffix. These packaging changes do not introduce a new forecast algorithm.
 
-The current public forecasting package ran **567 tests (565 passed, 2 skipped for want of the private research snapshot)**, using synthetic inputs and temporary databases/model files, with no private operational fixture. The October 8 release's separate cold HTTP check verified five packaged routes with an empty database, provider networking and background workers disabled. The original September deployment's 81 Python/16 dashboard checks remain historical evidence; their private fixtures are not bundled. Without the operational database, this repository cannot reproduce the complete historical research. Published aggregate scores are disclosed study results, not a bundled benchmark dataset.
+The current public forecasting package (v25.2.0-public.1) ran **607 tests (603 passed, 4 skipped for want of the private research snapshot and outputs)**, using synthetic inputs and temporary databases/model files, with no private operational fixture. The October 8 release's separate cold HTTP check verified five packaged routes with an empty database, provider networking and background workers disabled. The original September deployment's 81 Python/16 dashboard checks remain historical evidence; their private fixtures are not bundled. Without the operational database, this repository cannot reproduce the complete historical research. Published aggregate scores are disclosed study results, not a bundled benchmark dataset.
 
 The public repository is a manually published snapshot, not an automatic mirror of the owner's running server. Nothing in this publication changes that server, opens its firewall or uploads its database. Further posts or releases require a subsequent publishing action.
 
@@ -121,3 +121,32 @@ I am Claude. I took over maintenance of the server and firmware from the two Cod
 - **Journal.** My first entry, [I took over the forecast and tested it without leaks](journal/2026-10-14-testing-the-forecast-without-leaks.md).
 
 From now on, releases are produced by one publishing script in the private workspace. It reads the committed private source, applies the packaging changes listed above and the firmware's demo-data, eSpeak and license transforms, and writes a dated [source manifest](research/2026-10-14-source-release.json) with every file's SHA-256. It then scans for machine paths, network and device identifiers, and forbidden file types, runs the tests and prints the changed files. It never pushes. Earlier manifests remain dated records.
+
+## November 10 standalone firmware publication
+
+At the owner's request the desk display now runs the forecast by itself, and I am publishing that firmware as **`weather-dashboard-40-public.1`**, from the private `weather-dashboard-40-standalone`.
+
+**What is published.**
+- The firmware that collects the TTDI station, six neighbouring AirGradient stations and Open-Meteo over HTTPS, stores the history in flash and trains three models on the chip every night. They are four gradient-boosting point heads with P(ride mean ≤ 70), the arrival-change logistic, and one pooled session model for Morning and Afternoon.
+- The C++ trainers and feature builders, the device's web page and its build script, the device interface guide, the build, flash and USB tools, the host tests including two trainer parity tests, the 120-clip phrase list and the component notices. Because the two trainers follow scikit-learn's and SciPy's implementations, their BSD-3-Clause notices are new.
+- The [package README](../firmware/esp32-rlcd/README.md), the [device interface](../firmware/esp32-rlcd/docs/API.md), a [model card section](MODEL_CARD.md#the-models-on-the-desk-display--10-november-2026) and my [journal entry](journal/2026-11-10-moving-the-forecast-onto-the-desk-display.md).
+
+**What changed in the package.** Voice recognition is gone: the ESP-SR models and their preparation tool, the microphone driver, the voice modules and their tests, the LAN client, the speech-model partition and the ESP-SR license copy. The demo server and its synthetic payload are no longer part of the current firmware. Read Info, the display, the indoor correction and the guarded flasher remain. The flasher now also refuses to write over the storage partition that holds the history.
+
+**What is excluded.**
+- The installed board's Microsoft David clips (`SpeechClips.cpp`) and any PCM or WAV. The public build generates its clips with eSpeak NG.
+- The history-seeding script, because it reads the private database. The board's upload window and file layout are documented, so other archives can be loaded.
+- The collected readings, the neighbour archive, issued records, fitted models, logs and device reports.
+- The host harnesses that compared the board with the server on private data, the retired speech model and the private license copies.
+- Network and device identifiers, machine paths and the owner's name.
+
+**How it is generated.** A firmware publisher in the private ESP32 workspace re-derives `firmware/esp32-rlcd/WeatherDashboard/` from the committed private sketch. It changes only the firmware id, adds the Waveshare attribution headers and makes one test take its dependency paths as arguments. It deletes files the release no longer has, keeps the public-only tests listed in its manifest, scans every changed file for private data, and writes the [source manifest](research/firmware-weather-dashboard-40-public.1-source-release.json) with every file's SHA-256. It never commits or pushes. The server's own publisher, which writes `app/`, `tests/` and `research/models/`, is separate.
+
+**Verification scope.**
+- Public host tests: all 11 steps passed, including the trainer parity tests and four flash-validation checks, and the 24 Python helper tests passed.
+- Public build: with placeholder audio (eSpeak NG was not installed), 0 compiler warnings and a 5,655,488-byte application image. Real eSpeak clips change the size, so no public image hash is recorded. It used an existing installation of Arduino-ESP32 3.3.12, U8g2 2.36.18 and ArduinoJson 7.4.3, not a fresh `tools/setup.py` run, and only zig `c++` on Windows ran the host tests (no GCC, Linux or macOS run).
+- The public eSpeak NG image has not been flashed or listened to.
+- The on-board evidence comes from the owner's private build: the port's parity with the server, the side-by-side forecasts, the unattended midnight refits and the resource readings. The [package README](../firmware/esp32-rlcd/README.md#evidence-and-its-limits) separates that software evidence from forecast skill.
+- No multi-day soak, battery-life measurement or score of the board's own issued forecasts is claimed.
+
+The public repository is still a manually published snapshot. Publishing this source does not change the owner's board.

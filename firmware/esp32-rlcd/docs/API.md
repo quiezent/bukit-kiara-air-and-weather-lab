@@ -1,56 +1,51 @@
-# LAN data contract for the ESP32 dashboard
+# The board's own interface
 
-The **32-public.1** board firmware consumes **RLCD schema version 1** over HTTP, with unchanged native arrival-change and current-status fields. V32 changes only the spoken rain wording (no **Warning**); v31 changed the reading footer; v30 added local readout-stop controls and removed the displayed/spoken **Observed:** prefix. The [package README](../README.md#v32-verification-14-october-2026) scopes current verification and preserves the historical v30 and v31 results. Its public eSpeak NG voice remains unflashed. The [v29 recovery record](VERIFICATION_AUDIO_RECOVERY_2026_10_09.md), [v28 observed-status record](VERIFICATION_OBSERVED_2026_10_09.md), [v27 indoor record](VERIFICATION_INDOOR_2026_10_09.md) and [v26 arrival record](VERIFICATION_2026_10_09.md) remain historical evidence. The example [rlcd-v1-synthetic.json](../examples/rlcd-v1-synthetic.json) uses invented values. [demo_server.py](../tools/demo_server.py) serves that fixture with coherent fresh clocks; it is not a sensor, weather service or trained forecast model.
+Since **40-public.1** (10 November 2026) the board collects, trains and forecasts by itself, and this is the interface it offers: an HTTP service on port 80 of its Wi-Fi address and a USB serial console. It no longer reads any server. Earlier client releases (25-public.1 to 32-public.1) consumed a LAN server's `/api/rlcd/v1`; that contract is described in the 32-public.1 version of this file in the repository history and in the [historical verification records](VERIFICATION.md).
 
-## Discovery and transport
+The board registers the mDNS name **`ttdi-weather.local`** and advertises `_http._tcp` on port 80. Its DHCP hostname is `waveshare-weather`. All epochs are UTC Unix seconds; the board's day, session and midnight clocks use Malaysia time (UTC+8). A missing value is never zero or an invented replacement: inside an available object it is JSON `null`, and an unavailable object carries `available: false` and may omit its value fields.
 
-Advertise DNS-SD service **`_ttdi-weather._tcp.local.`** with an IPv4 address and port, plus these TXT records:
+The service has no authentication or TLS. Keep the board on a trusted LAN.
 
-| TXT key | Value |
+## HTTP endpoints
+
+| Method and path | Returns |
+| --- | --- |
+| `GET /` | The web dashboard: one gzip-encoded page of about 9 KB, built from [web/index.html](../WeatherDashboard/web/index.html) into `WebPage.h` by `tools/build_web.py` |
+| `GET /weather` | The forecast payload below (schema 1); `503 {"error":"weather_unavailable"}` before the first one is ready |
+| `GET /history?hours=6\|24\|168` | Stored readings for the web charts; any other `hours` gives `400` |
+| `GET /status` | Firmware, Wi-Fi, CPU, memory, collection, model and readout state |
+| `GET /debug/forecast` | The inputs and raw outputs of the newest forecast |
+| `GET /screen.pbm` | The current framebuffer as a 400 × 300 binary PBM image |
+| `POST /refresh` | Asks for an immediate collection pass: `202 {"refresh":"requested"}` |
+| `POST /view` | Form field `page=0`, `1` or `2` selects a page: `200 {"page":N}`, otherwise `400` |
+| `POST /read-info` | Same as releasing KEY when idle: `202 {"started":true}`, `409` while a readout plays, `503` when no readout could start (for example before the first payload) |
+| `POST /indoor-correction` | Sets the indoor temperature offset ([below](#local-board-indoor-correction)) |
+| `POST /seed`, `POST /seed-done` | History upload; only while the USB `SEED` window is open, otherwise `403 {"error":"seed_closed"}` ([below](#history-seeding)) |
+
+The web page polls `/weather` every 180 s and `/history` for the selected range. **Fetch now** posts `/refresh`, then polls `/weather` until `generated_epoch` changes; a new reading usually arrives in about 20–40 s.
+
+## The forecast payload: `GET /weather`
+
+The payload keeps **schema 1** and the field meanings of the server's `/api/rlcd/v1`, which the pages were written against. The board builds it every 60 s, and at once when a new reading or weather run arrives.
+
+| Top-level field | Meaning |
 | --- | --- |
 | `schema_version` | `1` |
-| `api_path` | `/api/rlcd/v1`, or another path beginning `/api/` |
+| `generated_epoch` | When the board built this payload; it is also the forecast issue clock |
+| `served_epoch` | When this HTTP response was sent (added by the board, not in the server's payload) |
+| `timezone` | `"Asia/Kuala_Lumpur"` |
+| `source` | `"device"` |
+| `current`, `weather`, `tennis_morning`, `history`, `forecast` | Below |
 
-The board browses on Wi-Fi connection, periodically and after failed requests. It can re-resolve a previously advertised hostname when a browse fails. It polls about every 60 seconds, retries failed requests after 15 seconds and rediscovers periodically. Advertise the server's current LAN interface rather than assuming its DHCP address remains fixed. mDNS multicast must reach both devices on the same LAN.
+### `current`
 
-Serve `GET /api/rlcd/v1` with HTTP **200**, uncompressed, unchunked UTF-8 JSON and an explicit **Content-Length** of **1–16,384 bytes**. The client uses HTTP/1.0, rejects missing/nonpositive or oversized reported lengths, and checks the received byte count. Body size is measured in UTF-8 bytes, not characters. The synthetic server sends `Content-Length` and keeps its body below this limit.
-
-The acceptance check requires `schema_version: 1`, `generated_epoch` later than 1,700,000,000, and object-valued `current`, `weather` and `forecast`. Emit `timezone: "Asia/Kuala_Lumpur"` and use UTC Unix seconds for all epochs; the board's Malaysia display/session clocks use UTC+8. JSON nesting must fit the firmware's limit of 12 levels. Use JSON `null` and availability flags for missing measurements, not zero, NaN or invented replacements. Preserve the original observation, fetch, issue, reference and target times when returning cached data.
-
-`demo: true` activates the public variant's visible **DEMO WEATHER** heading and spoken **Demonstration data** prefix. Its synthetic server also advertises `demo=true` and returns an `X-RLCD-Synthetic-Demo` header; the board's marker comes from the JSON field.
-
-## Preserve the native forecast questions
-
-| Quantity | API location | Native meaning |
-| --- | --- | --- |
-| First substantial change | `forecast.near90.first20` | Which first ≥20 µg/m³ crossing occurs within the next 90 minutes: rise, drop or neither? |
-| Arrival estimate | `forecast.near90.pm25_ugm3` | Primary model's concentration estimate at `target_epoch`, normally issue +90 minutes |
-| Arrival change | `forecast.near90.arrival_change` | Native probabilities of concentration change at the exact +90-minute arrival target, relative to the original fresh reference |
-| Ride context | `forecast.ride90_210` | Two-hour window from issue +90 to +210 minutes: mean, extrema, weather and chance its mean is ≤70 |
-
-A first crossing can reverse before arrival. Its probabilities are not arrival-change probabilities, and a concentration estimate is not a crossing threshold. The board consumes the server's native arrival-change head; it does not manufacture that head by subtracting point estimates, deriving a probability from first crossings or repurposing ride-window probabilities. If arrival data is unavailable, Page 1 says so rather than substituting `first20`.
-
-The concentration estimate, original reference, within-window extrema, first-crossing probabilities and arrival-change probabilities each retain their native units and target clocks. All values in the synthetic example are illustrative; no prediction model is evaluated by the demonstration server.
-
-## Field semantics
-
-| Object | Fields used by the device |
-| --- | --- |
-| `current` | `available`, `fresh`, `observed_epoch`, `pm25_ugm3`, `temperature_c`, `humidity_pct`, `display_text` |
-| `weather` | `available`, `fresh`, `fetched_epoch`, `current_hour`, `next_hours` |
-| `forecast` | `available`, `fresh`, `issued_epoch`, `near90`, `ride90_210`, `sessions` |
-| `tennis_morning` | Dated 07:00–09:00 weather window with availability, fetch clock, rain, feels-like temperature and wind |
-| `history` | Availability/freshness, source/window epochs, four-column points, collection gaps and full-source PM summary |
-
-Primary PM values require `available: true`, a finite nonnegative `pm25_ugm3` within the display range, and role `raw_model_output`, `experimental_model_output` or legacy `experimental_window_mean`. The device never substitutes `reference_pm25_ugm3` for a missing primary model value. Qualification/calibration metadata stays distinct from numerical output; an eligible raw estimate is not treated as an operational recommendation.
-
-`current.display_text` is the server's nonempty dynamic status for the current sensor concentration. Page 1 removes only its leading `Observed: ` prefix for display, preserving the status body and any old-data marker; the API value remains unchanged. Missing status text is not replaced by a fabricated classification, and invalid/expired current data stays unavailable. This text is independent of the arrival headline.
+`available` is true when the newest TTDI reading is at most 15 minutes old and has a PM2.5 value; `fresh` when it is at most 7 minutes old. `observed_epoch` is the sensor's own timestamp. When available it carries `pm25_ugm3`, `temperature_c`, `humidity_pct` and `heat_index_c` as the sensor reported them. `display_text` is the observed-status line, such as `Observed: Recent PM2.5 medians at or below 35 µg/m³` or `Latest sensor reading`. It is the server's rule-based observation label recomputed on the board from the last 24 hours, not a forecast.
 
 ### Observed-status speech
 
-Page 1 captures `current.display_text` when building its readout snapshot. It speaks the corresponding recorded status immediately **after current outdoor PM2.5 and before outdoor temperature**. Exact case, punctuation and UTF-8 spelling select this finite bank:
+Read Info on Page 1 speaks the status body right after the current outdoor PM2.5 and before the outdoor temperature, from this finite clip bank. Exact text selects the clip:
 
-| Exact API `current.display_text` | Spoken words |
+| `current.display_text` | Spoken words |
 | --- | --- |
 | `Observed: Fast PM2.5 rise detected` | Fast PM2.5 rise detected |
 | `Observed: Fast PM2.5 rebound detected` | Fast PM2.5 rebound detected |
@@ -61,81 +56,104 @@ Page 1 captures `current.display_text` when building its readout snapshot. It sp
 | `Observed: PM2.5 reduction forming` | PM2.5 reduction forming |
 | `Observed: Rapid PM2.5 reduction detected` | Rapid PM2.5 reduction detected |
 | `Latest sensor reading` | Latest sensor reading |
-| Unknown, missing, null, empty or nonstring text with otherwise eligible current data | Observed status unavailable |
+| Anything else, with otherwise eligible current data | Observed status unavailable |
 
-PM2.5 is pronounced **P M two point five**. V30 speaks the matching fixed body without the recorded **Observed** prefix; the existing audio bank and exact API matching are unchanged. The neutral and unavailable phrases stand alone. There is no runtime arbitrary-text synthesis or derived movement classification. Changing API wording without adding a matching clip causes the unavailable fallback rather than a transcript without corresponding audio.
+PM2.5 is spoken as **P M two point five**. The screen and the speech drop the leading `Observed: `; the payload keeps it. Expired or invalid current data suppresses the status.
 
-The status requires the same eligible current observation/concentration as the display, including a valid source epoch and PM value. Expired or future observations, unavailable current data and invalid PM suppress it entirely. Eligible old data retains the single **Outdoor data is old** announcement before current PM, without repeating it for the status. The existing seven-minute old / fifteen-minute expiry rules below are unchanged. Text, clip IDs and values are captured together; later server polling cannot change a running narration.
+### `weather`
 
-### Native arrival-change headline and probability
+Open-Meteo context for Page 1. `available` needs a run fetched within the last two hours; `fresh` one within 30 minutes. `fetched_epoch` is when the board received it. `current_hour.wind_kmh` is the 10 m wind of the hour containing now. `next_hours` lists up to six coming hours as `valid_epoch`, `rain_start_epoch`, `rain_end_epoch` and `rain_chance_pct` (0–100).
 
-`near90.arrival_change` supplies `available`, `issued_epoch`, `arrival_epoch`, `fresh_reference_epoch`, `reference_ugm3`, `fall20`, `fall40`, `rise20`, `rise40`, `within20`, `outcome`, `outcome_probability` and nonempty `display_text`. All probabilities are native fractions in **[0,1]**. The ≥40 tails are subsets of their corresponding ≥20 tails: `fall40 <= fall20` and `rise40 <= rise20`. The mutually exclusive coarse classes `fall20`, `rise20` and `within20` must sum to one; do not sum all five fields as though the ≥40 subsets were additional classes. `within20` is supplied by the server, not reconstructed on the board.
+### `tennis_morning`
 
-For a unique largest coarse-class probability, native `outcome` must be `fall20`, `rise20` or `within20`, and `outcome_probability` must match that class's probability. Exact ties require **both fields to be JSON null**. Winner comparisons are exact; coherence tolerances do not turn a unique winner into a tie or normalize its score. The native five-class model meaning and subset tails are retained even though the current card summarizes the three coarse outcomes.
+The 07:00–09:00 window, today's until it ends and then tomorrow's: `available`, `fresh`, `start_epoch`, `end_epoch`, `fetched_epoch`, and when available `rain_chance_max_pct`, `feels_like_max_c` and `wind_mean_kmh`. These come straight from the forecast; no model is involved.
 
-The head's `issued_epoch` must equal the parent forecast issue. `arrival_epoch` must equal both issue **+5,400 seconds** and `near90.target_epoch`, and remain in the future. The issue cannot be future-dated. `fresh_reference_epoch` must be no later than the issue and at most **240 seconds** older; preserve this original reference rather than refreshing it with later observations. Native `reference_ugm3` must be valid. It must agree with `near90.reference_pm25_ugm3` only when that point-reference field is nonnull; an absent or explicitly null point reference does not invalidate an independent arrival head with its own valid native reference. Parent forecast availability and expiry still apply.
+### `history`
 
-The screen uses the native `display_text` plus the validated `outcome_probability × 100`, rounded only for display. A tie keeps the native headline and shows no percentage. Speech uses finite clips for **Fall on arrival**, **Rise on arrival** or **No change on arrival**, followed by that same native winner percentage; `within20` describes its concentration band, not an assertion of exactly zero change. A tie says **Arrival outcome uncertain** without a percentage. Missing, inconsistent or expired arrival data is unavailable; it never falls back to `first20`. The arrival head can remain valid when the separately available +90-minute numerical estimate is missing.
+The last six hours for the on-screen graph: `available`, `fresh`, `observed_epoch`, `start_epoch`, `end_epoch`, `columns` = `["epoch", "pm25_ugm3", "temperature_c", "heat_index_c"]`, and `points` holding up to the newest 128 rows, rounded to one decimal. `gaps` lists `[before, after]` pairs wherever consecutive readings are more than `gap_after_s` (600 s) apart, with `gap_kind: "source_collection_before_downsampling"`. `pm25_summary` gives `available`, `sample_count`, `average_ugm3`, `lowest_ugm3` and `highest_ugm3` over the same rows. At the 3-minute cadence six hours hold about 120 rows, so nothing is thinned.
 
-### First-change model summary
+### `forecast`
 
-`first20` provides `available`, `rise_probability`, `drop_probability`, `none_probability`, `reference_ugm3`, `diagnostic_direction`, `direction` and `display_text`. Probabilities are fractions in **[0,1]**, not percentages, and must sum to one within the classifier's tolerance. `diagnostic_direction` describes the raw unique winner; use `rise`, `drop` or `unresolved`. A unique neither winner and ties both use `unresolved`. Operational `direction` can remain unresolved independently of the raw winner.
+`issued_epoch` is the issue clock. `available` and `fresh` are true when the newest reading is at most 15 minutes old and at least one model output was published.
 
-This head remains a separate first-crossing target. The Page 1 arrival card and readout do not use it as their arrival outcome. The retained classifier validates raw probabilities and diagnostic direction; a tie must not claim that no ≥20 crossing is most likely. When diagnostic metadata is absent, it supports legacy `direction` semantics. Preserve `display_text` and structured fields consistently for clients that present this separate target.
+| Object | Fields |
+| --- | --- |
+| `near90` | `available`, `role`, `calibrated`, `pm25_ugm3` (the +90-minute point), `target_epoch` (issue + 5,400 s), `first20`, `arrival_change` |
+| `near90.first20` | Always `{"available": false}`: the first-crossing head is not ported |
+| `near90.arrival_change` | `available`, `issued_epoch`, `arrival_epoch` (issue + 5,400 s), `fresh_reference_epoch`, `reference_ugm3`, `fall20`, `fall40`, `rise20`, `rise40`, `within20`, `outcome`, `outcome_probability`, `display_text`, `model` (`device_arrival_logistic_recall_f2_v2`) |
+| `ride90_210` | `available`, `role`, `calibrated`, `pm25_ugm3` (the ride mean), `start_epoch` (issue + 5,400 s), `end_epoch` (issue + 12,600 s), `minimum_maximum`, `mean_le70`, `weather` |
+| `ride90_210.minimum_maximum` | `available`, `kind: "predicted_window_minimum_maximum"`, `resolution_minutes: 15`, `minimum_ugm3`, `maximum_ugm3` |
+| `ride90_210.mean_le70` | `available`, `probability` (absent when unavailable) |
+| `sessions.morning`, `sessions.afternoon` | `issued_epoch`, `start_epoch`, `end_epoch`, `pm` (`available`, `role`, `calibrated`, `pm25_ugm3`, `model: "device_session_pooled_hgb_v1"`) and `weather` |
 
-### Ride range, mean and probability
+Every PM2.5 output carries `role: "raw_model_output"` and `calibrated: false`. It is the model's literal output: a missing or unfitted model gives `available: false` and `pm25_ugm3: null`, never persistence or another head's value.
 
-`ride90_210.start_epoch` and `end_epoch` define a valid two-hour window. Its new `minimum_maximum` head must have:
+- **Point heads.** The +90 value and the ride mean, minimum and maximum come from four gradient-boosting regressors, each predicting the change from the fresh reference. They need today's fitted model, a fresh sensor input row, an Open-Meteo run fetched before the issue and at most two hours old, and at least one neighbour station. Without these, all four are unavailable. The minimum and maximum are point forecasts of the smallest and largest complete 15-minute medians in the window, not a confidence interval.
+- **P(ride mean ≤ 70).** `mean_le70.probability` places the out-of-fold residual distribution of the ride-mean head around the current ride-mean forecast. 70 µg/m³ is the owner's planning cutoff, not a health limit.
+- **Arrival change.** The five-class classifier's tails: `fall20` and `rise20` are changes of at least 20 µg/m³ from `reference_ugm3` at `arrival_epoch`, and `fall40` and `rise40` the ≥40 subsets of those. `fall20`, `within20` and `rise20` sum to one. `outcome` is `fall20`, `rise20` or `within20` for a unique largest class, with `outcome_probability` its probability and `display_text` **Fall on arrival**, **Rise on arrival** or **No change on arrival**. On an exact tie both are `null` and `display_text` is **Arrival outcome uncertain**. The head needs today's fitted model and a reading from the last five minutes as its reference. The probabilities are recall-weighted, so they are not calibrated.
+- **Sessions.** Morning is the next 09:00–11:00 window and Afternoon the next 14:00–16:00 window that still starts at least 90 minutes after the issue. Both come from one pooled model, trained without the server's three CAMS inputs.
+- **Window weather.** `ride90_210.weather` and each session's `weather` hold `available`, `fresh`, `fetched_epoch`, `coverage_verified`, `coverage.complete`, and when complete `temperature_max_c`, `feels_like_max_c`, `humidity_mean_pct`, `wind_mean_kmh`, `gust_max_kmh`, `rain_chance_max_pct` and `rain_mm`. Instant fields use the hours the window starts in and interval fields the hours it ends in, as on the server. An incomplete window is unavailable rather than summarised from part of it.
 
-```json
-{
-  "available": true,
-  "minimum_ugm3": 31.4,
-  "maximum_ugm3": 53.8,
-  "resolution_minutes": 15,
-  "kind": "predicted_window_minimum_maximum"
-}
-```
+Compared with the server's `/api/rlcd/v1`, the board sends only the fields listed above, with the same meanings. It adds `source` and `served_epoch` and leaves `first20` unavailable. Among the fields it omits are the top-level `status`, `refresh_after_s`, `dashboard_build` and `limitations`; every `age_s`; the point heads' `reference_pm25_ugm3`, `experimental`, `validated`, `qualified`, `used_for_decision`, `performance_status` and `range_*` fields (and `model` on `near90` and `ride90_210`); `model` on `minimum_maximum` and `mean_le70`, and `calibrated` on `mean_le70`; the arrival head's `calibrated` and `recallWeighting`; `sessions.*.logistics_epoch`; and most hourly weather fields. The arrival head carries its own `reference_ugm3`. There is no `demo` field any more.
 
-These are predicted within-window extrema across 15-minute periods, not measured minima/maxima or confidence bounds on the two-hour mean. Limits must be finite, ordered and within the display range. If this modern object is explicitly null, unavailable or invalid, the device cannot revive legacy quantiles as extrema. It can instead show a valid primary mean labelled **MEAN**.
+## Stored history: `GET /history?hours=6|24|168`
 
-Legacy payloads omitting `minimum_maximum` can retain `range_kind: "empirical_q10_q90"` with `range_low_ugm3`/`range_high_ugm3`; those limits describe quantiles for the window mean. `mean_le70` independently supplies `available` and fractional `probability`. The value 70 is a planning cutoff, not a health/safety threshold. Mean, extrema, mean-≤70 probability and first-change predictions have independent availability; a warming-up mean model need not suppress available extrema or probability heads.
+Returns `hours`, `stored_days` (the span of readings held in memory), `source_rows` (readings in the requested window), `columns` = `["epoch", "pm25_ugm3", "pm10_ugm3", "temperature_c", "heat_index_c"]`, `points`, `gaps` and `summary`. Up to 480 rows are sent as they are. Above that, the window is cut into 240 time bins, and each bin keeps its lowest and highest PM2.5 rows, so a short spike survives the thinning. `gaps` lists up to 64 `[before, after]` pairs more than 600 s apart. `summary` (`available`, `sample_count`, `average_ugm3`, `lowest_ugm3`, `highest_ugm3`) covers every reading in the window, not only the rows sent.
 
-### Sessions and window weather
+## Status: `GET /status`
 
-`forecast.sessions.morning` and `.afternoon` contain `issued_epoch`, `start_epoch`, `end_epoch`, primary `pm` and `weather`. The example uses 09:00–11:00 and 14:00–16:00 Malaysia time. Speech compares valid primary values at displayed one-decimal precision only when the forecast is fresh, session issues match it and the windows remain valid. It speaks this/tomorrow morning/afternoon from the actual dates; expired or unsupported dates are not silently relabelled. `tennis_morning` is a separate 07:00–09:00 weather-only window; Page 1 labels its displayed wind value in **km/h**.
+The same JSON is printed for the USB `STATUS` command.
 
-Modern ride/session weather must provide `coverage_verified: true` and `coverage.complete: true`, plus `available`, `fresh`, `fetched_epoch`, `rain_chance_max_pct`, `rain_mm`, `feels_like_max_c`, `humidity_mean_pct`, `wind_mean_kmh` and `gust_max_kmh`. It must cover the complete target window. Incomplete coverage suppresses the window's weather/readout warnings rather than presenting a partial summary as complete. Genuine legacy payloads without either coverage field retain their earlier availability behavior. Fetch clocks must not postdate the forecast issue.
+| Field | Meaning |
+| --- | --- |
+| `firmware`, `uptime_s`, `clock`, `page`, `frames` | Firmware id, seconds since boot, the board's clock, selected page (0–2) and frames drawn |
+| `wifi` | `connected`, `rssi`, `ip`, `power_save` (0 none, 1 minimum modem sleep, 2 maximum) |
+| `cpu` | `mhz`; per core `busy_last_minute_pct`, `busy_peak_minute_pct` and `busy_since_boot_pct`, from the idle tasks' run time sampled every minute; `measured_s` |
+| `heap` | `internal_free`, `internal_min` (lowest since boot) and `psram_free`, in bytes |
+| `battery_v` | Battery voltage from the board's divider |
+| `engine` | `storage_ready`, `storage_used`, `storage_total`, `storage_formats`; `readings`, `polls`; `ttdi_ok`/`ttdi_fail`, `neighbour_ok`/`neighbour_fail`, `weather_ok`/`weather_fail`, `last_http`, `last_tls_error`; `last_reading`, `last_weather`, `last_issue` (epochs); `task_stack_free`; `model_cutoff`, `model_fitted`, `last_fit_ms`, `arrival_cutoff`, `arrival_fit_ms`, `session_cutoff`, `session_fit_ms`, `fit_stage` (0 when no fit is running); `observe_ms` (time to compute the status line) |
+| `readout` | `busy`, `requests`, `completed`, `stopped`, `planned_seconds`, `stack_free_min`, `error` |
 
-Hourly rain uses `rain_start_epoch`/`rain_end_epoch` one-hour intervals and `rain_chance_pct` in **[0,100]**. A provider's `current_hour` can describe the preceding hour. Speech selects the interval containing now and the interval containing now +1 hour, rather than trusting an array position. Rain warnings are issued for valid ride/session probabilities strictly **above 75%**.
+A model's `*_cutoff` equal to the latest Malaysia midnight means it was refit for today and can publish.
 
-### Observations, history and stale data
+## Forecast inputs: `GET /debug/forecast`
 
-History columns are exactly `["epoch", "pm25_ugm3", "temperature_c", "heat_index_c"]`; row values may be null. The firmware accepts up to **128 points**, within the unchanged **16 KiB complete-response budget**. When the original window contains at most 128 source rows, retain every row that fits the response budget. For larger windows, select balanced original rows preserving the endpoints and extrema of each plotted trace—PM2.5, temperature and heat index—rather than optimizing only the PM curve. Do not interpolate invented observations.
+For checking the board against another implementation: `issue`, `fresh` (the input row was complete enough to forecast), `has_wind`, `x` (the 81 point-model inputs, in the order of [PmFeatures.h](../WeatherDashboard/PmFeatures.h)), `point` (+90, ride mean, ride minimum, ride maximum), `chance` (P(ride mean ≤ 70)), `arrival` (the five class probabilities: fall ≥40, fall 20–40, within 20, rise 20–40, rise ≥40) and `session` (Morning, Afternoon). Missing values in `x`, `point`, `arrival` and `session` are `null`; `chance` is omitted when unavailable, and the body is `null` before the first forecast.
 
-Supply `gap_kind: "source_collection_before_downsampling"` and a `gaps` array describing original collection gaps, including `[]` when collection is known to be continuous. This marker lets the graph distinguish true collection gaps from spacing introduced by thinning. The firmware consumes only the first **128 gap pairs**; keep the published gap description within that limit. `pm25_summary` contains `available`, `average_ugm3`, `lowest_ugm3`, `highest_ugm3` and `sample_count`, computed from all accepted original observations in the same displayed window. The summary and original gap metadata remain based on the unthinned source even when graph rows are reduced; do not recalculate them from the retained graph rows.
+## USB serial commands
 
-Outdoor observations are marked old after seven minutes (or `fresh: false`) and unavailable after 15 minutes. PM forecasts are marked old after two minutes and unavailable after ten. Modeled weather is marked old after 30 minutes and unavailable after two hours. Original clocks, null values and invalid fields control these states; a new HTTP receipt must not make old content fresh. Historical graph data can remain visible with its original dates and **OLD** markers.
+115200 baud, one command per line, newline-terminated. Replies are JSON lines. `tools/provision.py` sends them.
 
-Indoor measurements and battery voltage come from the ESP32 board, not this API. Battery percentage is a coarse voltage-derived estimate. The firmware snapshots the selected page's values before playback so later polling/navigation cannot alter a readout mid-sentence.
+| Command | Effect |
+| --- | --- |
+| `STATUS` | Prints the status JSON above |
+| `WIFI <ssid-hex> <password-hex>` | Joins a 2.4 GHz network; both values are hex-encoded UTF-8, and `-` stands for an empty password. They are saved in NVS once connected and never echoed. `provision.py wifi` builds this command from a hidden prompt |
+| `VIEW <n>` | Selects page `n` (0 overview, 1 ride forecast, 2 history) |
+| `READINFO` | Same as releasing KEY: reads the page aloud, or stops a readout |
+| `REFRESH` | Asks for an immediate collection pass |
+| `SEED` | Opens the ten-minute history-upload window |
+
+## History seeding
+
+`SEED` opens a ten-minute window. Within it, `POST /seed` takes one day file as the raw request body, with its destination in the `X-Seed-Path` header: `/r/`, `/p/`, `/x/`, `/g/` or `/s/` followed by `yyyymmdd.bin`. The board writes the body to a temporary file and renames it over the day file only when every byte announced in `Content-Length` has arrived, so a cut connection leaves the old file in place. It answers `200 {"opened":true,"bytes":N}` for a complete upload and `500` otherwise. `POST /seed-done` restarts the board so it loads the new history. Outside the window both return `403`. The record layouts are the structs in [Engine.cpp](../WeatherDashboard/Engine.cpp) and [PmFeatures.h](../WeatherDashboard/PmFeatures.h). The owner's seeding script reads a private database and is not published.
 
 ## Local board indoor correction
 
-This setting belongs to the **ESP32's own HTTP service**, separate from the weather producer's `/api/rlcd/v1`. Send `POST /indoor-correction` to the board with `Content-Type: application/x-www-form-urlencoded` and this form field:
+This sets the indoor temperature offset. Send `POST /indoor-correction` with `Content-Type: application/x-www-form-urlencoded` and this form field:
 
 ```text
 temperature_offset_c=-4.0
 ```
 
-For example, replace `BOARD_HOST` with the board's current hostname or LAN address:
+For example, replace `BOARD_HOST` with the board's hostname or LAN address:
 
 ```sh
 curl -X POST "http://BOARD_HOST/indoor-correction" --data "temperature_offset_c=-4.0"
 ```
 
-The field must parse completely as a finite number in **[−10,+10] °C**; a JSON body is not accepted by this route. Success returns HTTP **200** with `{"saved":true,"temperature_offset_c":-4.00}`. Missing/invalid fields return **400**; a failed NVS save returns **500** without applying the requested change. Accepted settings persist across restarts. The current firmware uses the user-selected **−4.0 °C** fallback when no valid saved setting exists; flashing preserves an existing saved offset. The initial v27 −4.8 °C value and informal comparison evidence remain in the [dated v27 record](VERIFICATION_INDOOR_2026_10_09.md). Select your own offset using a co-located reference under the board's normal operating conditions; this estimate does not replace the SHTC3's factory calibration or establish traceable system calibration.
+The field must parse completely as a finite number in **[−10, +10] °C**; a JSON body is not accepted. Success returns `200 {"saved":true,"temperature_offset_c":-4.00}`. A missing or invalid field returns `400`. A failed NVS save returns `500` and leaves the offset unchanged. The setting persists across restarts and reflashes; with no valid saved setting the board uses **−4.0 °C**. Choose your own offset against a co-located reference in the board's normal position. It is an estimate and does not replace the SHTC3's factory calibration.
 
-Let `Traw` and `RHraw` be the manufacturer's converted sensor readings, and `offset` the configured temperature offset. The original firmware helper applies equation 1 of Sensirion's [Design Guide for Humidity and Temperature Sensors](https://sensirion.com/resource/user_guide/sht/design_in/):
+With `Traw` and `RHraw` the sensor's converted readings and `offset` the configured offset, the board applies equation 1 of Sensirion's [Design Guide for Humidity and Temperature Sensors](https://sensirion.com/resource/user_guide/sht/design_in/):
 
 ```text
 Tcorrected = Traw + offset
@@ -143,50 +161,8 @@ RHcorrected = RHraw × exp(17.62 × 243.21 × (Traw − Tcorrected)
                          / ((243.21 + Traw) × (243.21 + Tcorrected)))
 ```
 
-Temperatures are in °C and RH is in percent. RH is limited to **0–100%** after compensation; no independent RH offset is fitted. Offset **0** preserves the exact original temperature and RH. The board's `GET /status` exposes these fields within `indoor`:
-
-| Field | Meaning |
-| --- | --- |
-| `temperature_c`, `humidity_pct` | Corrected readings used for indoor displays and speech |
-| `raw_temperature_c`, `raw_humidity_pct` | Original converted sensor measurements |
-| `temperature_offset_c` | Active temperature offset |
-| `humidity_temperature_compensated` | Whether the active offset is nonzero |
-| `humidity_clamped` | Whether compensation required limiting RH to 0–100% |
-| `correction_method` | `board-heat-magnus-v1` |
-| `correction_is_estimate` | `true`: this configured system correction is an estimate |
-| `correction_saved` | Whether NVS holds the active offset |
-
-Unavailable measurements are returned as JSON `null`. Indoor values and their ranges on every page and in spoken summaries use the corrected readings. Outdoor observations, forecasts and history are unaffected.
-
-Changing the offset resets the corrected temperature and RH minima/maxima. Applying a setting does not take a new measurement or refresh the sample clock; a stale or invalid retained sample remains unavailable until a valid reading arrives.
-
-## Local board readout control
-
-Release physical **KEY** to start reading the selected page, or to request a stop while reading. The newline-terminated USB command **`KEY`** invokes exactly the same toggle; it is not a weather-producer API command. During playback the footer shows **[KEY] Stop Reading** on the left, **WiFi: RSSI** in the center and **[BOOT] Next Page** on the right. There is no **Voice: reading** indicator.
-
-The board's own `GET /status` adds these fields within `readout`:
-
-| Field | Meaning |
-| --- | --- |
-| `stopped` | Count of intentional stops handled during readout cleanup, separate from natural `completed` streams |
-| `stop_requested` | Whether the active readout has a stop request; false after cleanup |
-
-A stop mutes playback and lets the player release the speaker and resume microphone capture through the existing recovery/quiet-tail handoff. Voice read commands and BOOT navigation are unchanged.
+RH is limited to **0–100%** after compensation; no separate RH offset is fitted. Offset **0** keeps the original readings. The indoor values on every page and in Read Info use the corrected readings, and changing the offset resets the corrected minima and maxima. In 40-public.1, `/status` no longer includes the indoor fields that earlier releases reported.
 
 ## Local board audio diagnostics
 
-These fields belong to the **board's own `GET /status`**, within `voice`; they are not new fields in the weather producer's `/api/rlcd/v1`. V29 adds bounded runtime recovery and diagnostics while retaining the existing speech models, dictionary, 0.80 threshold and recordings. Public build/host and installed-device recovery checks passed, without establishing hours-long reliability or new human listening evidence.
-
-| Field | Meaning |
-| --- | --- |
-| `ready`, `error` | Current recognition readiness and error |
-| `recovery_pending` | Whether a runtime recovery is pending |
-| `recovery_count`, `recovery_attempts`, `recovery_failures` | Completed recoveries, attempts and failed attempts |
-| `feed_parked`, `detect_parked` | Both acknowledgements are required for pipeline reset; speaker handoff needs feed parking/pause and microphone-channel release |
-| `last_fault`, `last_fault_ms` | Preserved most-recent fault description and uptime clock |
-| `last_fault_feed_result`, `last_fault_feed_ms`, `last_fault_fetch_ms` | Captured fault-time feed result/progress clocks, retained through recovery |
-| `last_feed_result`, `last_feed_ms`, `last_fetch_ms` | Current feed/fetch progress diagnostics |
-
-USB console commands are newline-terminated: **`AUDIORESET`** requests the same bounded recovery used after a fault; **`AUDIOSTALL`** deliberately stops detector consumption for **6,000 ms** while feeding continues, exercising the real ring-saturation/fault path. The reply is an `audio_diagnostic` event with boolean `accepted`; the stall request is rejected during readout. They are diagnostic controls and do not alter command phrases or weather values. No HTTP route exposes them.
-
-Pipeline reset waits for both workers to park outside microphone/AFE/MultiNet calls before resetting the ring/VAD, cleaning the decoder and restarting the microphone. Speaker handoff requires the **feed worker parked or healthy capture paused**, plus **verified microphone-channel release**; it does not require detector parking. This lets KEY speech proceed when recognition remains faulted. Missing required acknowledgement/release reports failure while preserving resources. Pipeline repair is deferred until speaker release. Quiet-tail and stale-event guards apply when capture resumes. These controls help verify ownership/recovery transitions; they do not establish the spontaneous fault's original cause or long-term reliability.
+Removed in 40-public.1 together with voice recognition and the microphone. The voice-worker recovery fields and the `AUDIORESET` and `AUDIOSTALL` commands that v29 to v32 described here are in the 32-public.1 version of this file in the repository history.

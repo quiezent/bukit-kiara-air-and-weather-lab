@@ -376,18 +376,16 @@ bool buildCurrentPageReadout(const DashboardContext &context, SpeechPlaylist &ou
                             String &spokenText) {
   out = SpeechPlaylist{};
   spokenText = "";
+  if (context.page > 2) return false;
   Readout readout(out, spokenText);
   bool ok;
   if (!context.weather) {
     ok = readout.announcement(SpeechClip::UnavailableValue, "unavailable");
   } else {
     const uint32_t now = dashboardNow(context);
-    const JsonVariantConst demo = (*context.weather)["demo"];
-    ok = !demo.is<bool>() || !demo.as<bool>()
-        || readout.announcement(SpeechClip::DemoData, "Demonstration data");
-    ok = ok && (context.page == 1 ? sports(readout, context, now)
+    ok = context.page == 1 ? sports(readout, context, now)
         : context.page == 2 ? historyPage(readout, context, now)
-        : overview(readout, context, now));
+        : overview(readout, context, now);
   }
   if (!ok || !out.count) {
     out = SpeechPlaylist{};

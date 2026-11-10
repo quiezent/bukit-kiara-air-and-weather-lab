@@ -219,34 +219,12 @@ static void routingAndSnapshot() {
   for (size_t i = 0; i < snapshot.count; ++i) assert(t.clips.clips[i] == snapshot.clips[i]);
   t.c.weather = nullptr; t.page(2);
   assert(t.clips.count == 1 && t.text.str() == "unavailable.");
-}
-static void demoReadoutDisclosure() {
-  Test t;
-  for (unsigned page = 0; page < 3; ++page) {
-    t.reset(); t.page(page);
-    const std::string liveText = t.text.str();
-    const SpeechPlaylist liveClips = t.clips;
-    assert(!count(liveClips, C::DemoData));
-    t.d["demo"] = true; t.page(page);
-    assert(t.text.str() == "Demonstration data. " + liveText);
-    assert(t.clips.count == liveClips.count + 1);
-    assert(t.clips.clips[0] == C::DemoData && count(t.clips, C::DemoData) == 1);
-    // The disclosure must leave every numeric value and following audio clip
-    // unchanged: synthetic mode is provenance, not a different forecast path.
-    for (size_t i = 0; i < liveClips.count; ++i)
-      assert(t.clips.clips[i + 1] == liveClips.clips[i]);
-    for (unsigned nonDemo = 0; nonDemo < 5; ++nonDemo) {
-      if (nonDemo == 0) t.d["demo"] = false;
-      if (nonDemo == 1) t.d["demo"] = nullptr;
-      if (nonDemo == 2) t.d["demo"] = "true";
-      if (nonDemo == 3) t.d["demo"] = 1;
-      if (nonDemo == 4) t.d.remove("demo");
-      t.page(page);
-      assert(t.text.str() == liveText && t.clips.count == liveClips.count);
-      assert(!count(t.clips, C::DemoData));
-      for (size_t i = 0; i < liveClips.count; ++i)
-        assert(t.clips.clips[i] == liveClips.clips[i]);
-    }
+  // Page 4 (the voice face) never falls through to another page's readout,
+  // with or without weather data.
+  for (JsonDocument *weather : {static_cast<JsonDocument *>(nullptr), &t.d}) {
+    t.c.weather = weather; t.c.page = 3;
+    assert(!buildCurrentPageReadout(t.c, t.clips, t.text));
+    assert(!t.clips.count && t.text.str().empty());
   }
 }
 static void rainIntervalsAndValues() {
@@ -788,20 +766,6 @@ static void arrivalProbabilityReadout() {
   contains(t.text, "Current outdoor PM2.5 333.3."); contains(t.text, "No change on arrival, 78.8 percent.");
   t.d["forecast"]["near90"]["first20"] = nullptr; t.page(0);
   contains(t.text, "No change on arrival, 78.8 percent.");
-  // A null legacy point reference can accompany an independent native head
-  // while the point model warms up. Only the native reference is mandatory.
-  {
-    t.reset(); JsonObject near = t.d["forecast"]["near90"].as<JsonObject>();
-    near["available"] = false; near["pm25_ugm3"] = nullptr;
-    near["reference_pm25_ugm3"] = nullptr;
-    assert(decodeArrivalChange(near, now, now).available);
-    t.page(0); contains(t.text, "Ninety minute forecast PM2.5 unavailable.");
-    contains(t.text, "No change on arrival, 78.8 percent.");
-    sequence(t.clips, {C::NoChangeOnArrival, C::N70, C::N8, C::Point, C::N8, C::Percent});
-    near["arrival_change"]["reference_ugm3"] = nullptr;
-    t.page(0); assert(!count(t.clips, C::NoChangeOnArrival));
-    sequence(t.clips, {C::UnavailableValue, C::RainInAnHour});
-  }
   // Parent's 600-second expiry owns availability, even with a valid native head.
   for (uint32_t parentAge : {uint32_t(600), uint32_t(601)}) {
     t.reset(); const uint32_t issued = now - parentAge;
@@ -818,9 +782,9 @@ static void arrivalProbabilityReadout() {
   }
 }
 int main() {
-  routingAndSnapshot(); demoReadoutDisclosure(); rainIntervalsAndValues(); observedStatusReadout(); first20Semantics();
+  routingAndSnapshot(); rainIntervalsAndValues(); observedStatusReadout(); first20Semantics();
   sessionComparisonAndHighRain(); rangeHistoryIndoorBattery(); capacityDurationAndReset(); modernForecastSemantics(); arrivalProbabilityReadout();
-  puts("PASS: strict demo provenance, nullable point reference independence, observed status body without narration prefix, freshness/expiry/type guards and snapshot; native arrival winner probability, independent legacy crossing decoder, ties, rounding, malformed/stale/expired suppression, modern min/max and coverage");
+  puts("PASS: exact observed status transcript/audio, freshness/expiry/type guards and snapshot; native arrival winner probability, independent legacy crossing decoder, ties, rounding, malformed/stale/expired suppression, modern min/max and coverage");
 }
 """
 
@@ -880,12 +844,12 @@ def extract_function(source, signature):
 
 
 def main():
-    firmware = Path(__file__).resolve().parents[1]
-    package = firmware.parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cxx", required=True)
     parser.add_argument("--cxx-arg", action="append", default=[])
     parser.add_argument("--build-dir", type=Path, required=True)
+    firmware = Path(__file__).resolve().parents[1]
+    package = firmware.parent
     parser.add_argument("--arduino-json-src", type=Path,
                         default=package / ".state/arduino-user/libraries/ArduinoJson/src",
                         help="ArduinoJson 7.4.3 src directory")
@@ -894,7 +858,7 @@ def main():
                         help="Arduino-ESP32 3.3.12 cores/esp32 directory")
     parser.add_argument("--speech-manifest", type=Path,
                         default=package / "build/speech/manifest.json",
-                        help="Generated clip manifest with ID and sample_count for each clip")
+                        help="Generated clip manifest with id, phrase and sample_count for each clip")
     args = parser.parse_args()
     arduino_json = args.arduino_json_src.resolve()
     core = args.esp32_core_dir.resolve()

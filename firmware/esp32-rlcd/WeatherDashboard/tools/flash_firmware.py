@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Flash this dashboard's factory layout while preserving its existing NVS.
 
-Only bootloader, partition table, application, and speech-model ranges are written.
-The original nvs (0x9000..0xEFFF) and phy_init (0xF000..0xFFFF) remain untouched.
+Only the bootloader, partition table and application are written. The original nvs
+(0x9000..0xEFFF) and phy_init (0xF000..0xFFFF) and the storage area that holds the
+collected history (0x710000 onward) remain untouched.
 """
 
 import argparse
@@ -14,23 +15,16 @@ import struct
 import subprocess
 import sys
 
-from prepare_model import (
-    MODEL_BYTES,
-    MODEL_OFFSET,
-    MODEL_PARTITION_BYTES,
-    MODEL_SHA256,
-    PROJECT_DIR,
-    verify_model_image,
-)
-
 ESPTOOL_VERSION = "5.3.1"
 FLASH_BYTES = 0x1000000
 SECTOR_BYTES = 0x1000
+APP_BYTES = 0x700000
+STORAGE_OFFSET = 0x710000
 EXPECTED_PARTITIONS = {
     "nvs": (1, 2, 0x9000, 0x6000, 0),
     "phy_init": (1, 1, 0xF000, 0x1000, 0),
-    "factory": (0, 0, 0x10000, 0x800000, 0),
-    "model": (1, 0x82, MODEL_OFFSET, MODEL_PARTITION_BYTES, 0),
+    "factory": (0, 0, 0x10000, APP_BYTES, 0),
+    "storage": (1, 0x82, STORAGE_OFFSET, FLASH_BYTES - STORAGE_OFFSET, 0),
 }
 
 
@@ -65,7 +59,7 @@ def check_partition_table(path):
         raise ValueError("Partition-table MD5 record is missing")
     if partitions != EXPECTED_PARTITIONS:
         raise ValueError(
-            "Compiled partition table differs from this dashboard's factory/NVS/model layout. "
+            "Compiled partition table differs from this dashboard's factory/NVS/storage layout. "
             "Rebuild with the included partitions.csv; do not use an Arduino stock SR partition scheme."
         )
 
@@ -121,14 +115,14 @@ def find_build_images(directory):
 
 def check_write_ranges(images):
     previous_end = 0
-    protected = [(0x9000, 0xF000), (0xF000, 0x10000)]
+    protected = [(0x9000, 0xF000), (0xF000, 0x10000), (STORAGE_OFFSET, FLASH_BYTES)]
     for offset, path in sorted(images):
         size = path.stat().st_size
         end = (offset + size + SECTOR_BYTES - 1) & ~(SECTOR_BYTES - 1)
         if offset % SECTOR_BYTES or end > FLASH_BYTES or offset < previous_end:
             raise ValueError("Flash-image erase ranges overlap or exceed 16 MB")
         if any(offset < high and end > low for low, high in protected):
-            raise ValueError("Flash image would erase existing NVS or PHY data")
+            raise ValueError("Flash image would erase existing NVS, PHY or storage data")
         previous_end = end
 
 
@@ -136,7 +130,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="Serial port, for example COM5 or /dev/ttyACM0; required when flashing")
     parser.add_argument("--build-dir", required=True, type=Path, help="Directory containing the three compiled sketch images")
-    parser.add_argument("--model", type=Path, default=PROJECT_DIR / "flash" / "model.bin")
     parser.add_argument("--esptool", type=Path, help="Optional Arduino esptool 5.3.1 executable; otherwise uses python -m esptool")
     parser.add_argument("--baud", type=int, default=460800)
     parser.add_argument("--dry-run", action="store_true", help="Validate files and show the command without opening a serial port")
@@ -147,12 +140,10 @@ def main():
         if args.baud <= 0:
             raise ValueError("--baud must be positive")
         bootloader, partitions, application = find_build_images(args.build_dir.resolve())
-        model = args.model.resolve()
         check_partition_table(partitions)
         check_esp_image(bootloader, 0x8000)
-        check_esp_image(application, 0x800000)
-        verify_model_image(model.read_bytes())
-        images = [(0, bootloader), (0x8000, partitions), (0x10000, application), (MODEL_OFFSET, model)]
+        check_esp_image(application, APP_BYTES)
+        images = [(0, bootloader), (0x8000, partitions), (0x10000, application)]
         check_write_ranges(images)
 
         if args.esptool:
@@ -169,11 +160,11 @@ def main():
         for offset, path in images:
             command += [f"0x{offset:x}", str(path)]
 
-        print("Verified ESP32-S3 images, 16 MB headers, exact partition table, and model SHA-256.")
+        print("Verified ESP32-S3 images, 16 MB headers, and the exact partition table.")
         print("Write ranges:")
         for offset, path in images:
             print(f"  0x{offset:06X}  {path.stat().st_size:>9,} bytes  {path.name}")
-        print("NVS at 0x9000..0xEFFF and PHY at 0xF000..0xFFFF are excluded.")
+        print("NVS at 0x9000..0xEFFF, PHY at 0xF000..0xFFFF and storage from 0x710000 are excluded.")
         print("Command:")
         print(subprocess.list2cmdline(command) if sys.platform == "win32" else shlex.join(command))
         if args.dry_run:

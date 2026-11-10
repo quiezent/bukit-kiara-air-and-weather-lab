@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bukit Kiara Air &amp; Weather Outlook</title>
+<link rel="icon" href="data:,">
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#0f1113;--panel:#1a1d20;--panel2:#22262a;--border:#343a40;
+  --text:#f4f6f8;--muted:#a7afb7;--green:#7ee787;--red:#ff7b72;
+  --blue:#79c0ff;--orange:#ffa657;--yellow:#f2cc60;--cyan:#56d4dd;
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--text)}
+main{max-width:1180px;margin:auto;padding:26px 18px 60px}
+h1{margin:0 0 5px;font-size:clamp(1.8rem,4vw,2.55rem);letter-spacing:-.04em}
+h2{font-size:1.08rem;margin:0}
+.sub{color:var(--muted);margin-bottom:18px}
+.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
+.pill{display:inline-flex;gap:7px;align-items:center;padding:7px 10px;border:1px solid var(--border);
+  border-radius:999px;background:var(--panel);color:var(--muted);font-size:.85rem}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--yellow);flex:none}
+.dot.ok{background:var(--green)} .dot.bad{background:var(--red)}
+.panel,.now-card,.window-card{background:var(--panel);border:1px solid var(--border);border-radius:16px}
+.panel{padding:17px;margin-top:13px}
+.section-head{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.buttons{display:flex;gap:7px;flex-wrap:wrap}
+#ranges{display:flex;gap:7px}
+button{font:inherit;font-size:.83rem;color:var(--text);background:var(--panel2);
+  border:1px solid var(--border);border-radius:9px;padding:8px 11px;cursor:pointer}
+button.active{background:#333940;border-color:#65707a}
+button:hover{background:#2b3035}
+.now-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px}
+.now-card{padding:16px;min-height:138px}
+.label{font-size:.8rem;color:var(--muted)}
+.value{font-size:clamp(1.65rem,3vw,2.15rem);font-weight:780;letter-spacing:-.04em;line-height:1;margin:10px 0 8px}
+.value.range-value{font-size:clamp(1.35rem,2.25vw,1.85rem);white-space:nowrap}
+.unit{font-size:.82rem;color:var(--muted);font-weight:650;margin-left:4px}
+.signal{font-weight:730;line-height:1.25}
+.note,.signal-note{font-size:.78rem;color:var(--muted);line-height:1.42}
+.signal-note{margin-top:6px}
+.signal-note strong{color:var(--text)}
+.event-probabilities{display:flex;flex-wrap:wrap;gap:4px 12px;margin:8px 0 6px;font-size:.78rem;color:var(--muted)}
+.event-probabilities strong{color:var(--text)}
+.event-clock{margin-top:6px}
+.decision-panel{border-top:3px solid var(--cyan);padding-top:15px}
+.decision-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:15px}
+.window-card{background:var(--panel2);padding:15px}
+.window-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:11px}
+.window-title{font-size:1.03rem;font-weight:760}.window-target{font-size:.76rem;color:var(--muted);margin-top:3px}
+.badge{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:5px 8px;font-size:.72rem;color:var(--muted);white-space:nowrap}
+.metric{border-top:1px solid #33393e;padding:9px 0 7px}
+.metric:first-of-type{border-top:0}
+.metric-row{display:grid;grid-template-columns:62px 1fr;gap:9px;align-items:start}
+.metric-label{font-size:.72rem;font-weight:760;letter-spacing:.05em;color:var(--muted)}
+.metric-main{font-weight:710;line-height:1.3}
+.pm-window-value{font-size:30px;letter-spacing:-.6px}
+.window-weather .metric-main{font-size:15px;font-weight:500;color:var(--muted)}
+.metric-detail{grid-column:2;color:var(--muted);font-size:.73rem;line-height:1.35;margin-top:2px}
+.window-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid #33393e;padding-top:10px;margin-top:3px;font-size:.75rem}
+.recheck{color:var(--muted)}
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:13px}
+.chartbox{position:relative;background:var(--panel2);border:1px solid var(--border);border-radius:13px;padding:14px;min-width:0}
+.charthead{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:4px}
+.charthead span{font-size:.78rem;color:var(--muted)}
+canvas{display:block;width:100%;height:250px;touch-action:pan-y}
+.chart-tooltip{position:absolute;z-index:4;pointer-events:none;min-width:150px;padding:8px 10px;
+  border:1px solid #56616b;border-radius:8px;background:#111518ee;color:var(--text);
+  box-shadow:0 8px 22px #0008;font-size:.75rem;line-height:1.45;white-space:nowrap}
+.chart-tooltip strong{display:block;margin-bottom:3px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:.78rem;margin-top:6px}
+.sw{display:inline-block;width:10px;height:3px;border-radius:4px;margin-right:5px;vertical-align:middle}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.stat{background:var(--panel2);border-radius:10px;padding:10px;text-align:center}
+.slabel{color:var(--muted);font-size:.73rem}.svalue{font-weight:720;margin-top:4px}
+.error{color:var(--red)}
+@media(max-width:850px){
+  .now-grid{grid-template-columns:1fr 1fr}
+  .decision-grid,.charts{grid-template-columns:1fr}
+}
+@media(max-width:600px){
+  main{padding:20px 12px 48px}
+  .now-grid{grid-template-columns:1fr 1fr;gap:9px}
+  .now-card{min-height:122px;padding:14px}
+  .stats{grid-template-columns:1fr 1fr}.stat:last-child{grid-column:span 2}
+  canvas{height:215px}
+}
+@media(max-width:420px){
+  .now-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>Bukit Kiara Air &amp; Weather Outlook</h1>
+  <div class="sub">TTDI AirGradient PM2.5 · local weather model · refreshes every 3 minutes</div>
+
+  <div class="row">
+    <div class="pill"><span id="dot" class="dot"></span><span id="status">Starting…</span></div>
+    <div class="pill">Next dashboard refresh <strong id="countdown">3:00</strong></div>
+    <div class="pill">Stored history <strong id="historyStatus">loading…</strong></div>
+    <div class="pill" role="status"><span id="forecastStatus">Preparing forecast…</span><span id="forecastAge"></span></div>
+  </div>
+
+  <section class="now-grid" aria-label="Current air quality and weather">
+    <div class="now-card">
+      <div class="label">Current PM2.5</div>
+      <div class="value"><span id="pm02">—</span><span class="unit">µg/m³</span></div>
+      <div class="signal" id="particleLoad">Latest sensor reading</div>
+    </div>
+    <div class="now-card" id="arrivalCard">
+      <div class="label">PM2.5 forecast · +90 min</div>
+      <div class="value"><span id="arrivalValue">—</span><span class="unit">µg/m³</span></div>
+      <div class="signal" id="arrivalChangeSignal" role="status">Preparing arrival forecast…</div>
+      <div class="event-probabilities" id="arrivalChangeProbabilities" hidden>
+        <span>Fall ≥20: <strong id="arrivalFall20">—</strong> · ≥40: <strong id="arrivalFall40">—</strong></span>
+        <span>Rise ≥20: <strong id="arrivalRise20">—</strong> · ≥40: <strong id="arrivalRise40">—</strong></span>
+        <span>No ≥20 change: <strong id="arrivalWithin20">—</strong></span>
+      </div>
+      <div class="note event-clock" id="arrivalChangeClock"></div>
+    </div>
+    <div class="now-card" id="trailForecastCard">
+      <div class="label">Ride forecast · +90 to +210 min</div>
+      <div class="value range-value"><span id="trailRange">—</span><span class="unit">µg/m³</span></div>
+      <div class="signal" id="trailSignal">Preparing model output…</div>
+      <div class="signal-note">Two-hour mean: <strong id="trailMean">—</strong></div>
+      <div class="signal-note">Chance average ≤70 µg/m³: <strong id="cyclingProbability">—</strong></div>
+      <div class="signal-note" id="cyclingWindowClock"></div>
+    </div>
+    <div class="now-card">
+      <div class="label">Current heat and weather</div>
+      <div class="value"><span id="heatindex">—</span><span class="unit">°C</span></div>
+      <div class="signal">Apparent temperature</div>
+      <div class="signal-note" id="heatContext">Temperature — · humidity —</div>
+      <div class="signal-note" id="trailWeatherSignal">Forecast collecting…</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <div><h2>Sensor history</h2><div class="note">Hover or tap the graphs for exact readings.</div><div class="note" id="historyLoadStatus"></div><div class="note" id="collectionCoverage"></div></div>
+      <div class="buttons"><span id="ranges"><button type="button" data-h="6" class="active" aria-pressed="true">6 h</button><button type="button" data-h="24" aria-pressed="false">24 h</button><button type="button" data-h="168" aria-pressed="false">7 d</button></span><button type="button" id="fetchNow">Fetch now</button></div>
+    </div>
+    <div class="charts">
+      <div class="chartbox">
+        <div class="charthead"><strong>Particles</strong><span id="particleSummary">—</span></div>
+        <canvas id="particleChart" role="img" aria-label="PM2.5 and PM10 over the selected period"></canvas><div class="chart-tooltip" id="particleTooltip" hidden></div>
+        <div class="legend"><span><i class="sw" style="background:#79c0ff"></i>PM2.5</span><span><i class="sw" style="background:#ffa657"></i>PM10</span></div>
+      </div>
+      <div class="chartbox">
+        <div class="charthead"><strong>Temperature and heat index</strong></div>
+        <canvas id="heatChart" role="img" aria-label="Temperature and heat index over the selected period"></canvas><div class="chart-tooltip" id="heatTooltip" hidden></div>
+        <div class="legend"><span><i class="sw" style="background:#7ee787"></i>Temperature</span><span><i class="sw" style="background:#ff7b72"></i>Heat index</span></div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="slabel">Selected-period PM2.5 average</div><div id="pmAvg" class="svalue">—</div></div>
+      <div class="stat"><div class="slabel">Lowest</div><div id="pmMin" class="svalue">—</div></div>
+      <div class="stat"><div class="slabel">Highest</div><div id="pmMax" class="svalue">—</div></div>
+    </div>
+  </section>
+
+  <section class="panel decision-panel">
+    <div class="section-head">
+      <div><h2>Morning and afternoon · PM2.5 outlook</h2><div class="note">Direct model estimates for each exact 2-hour session</div></div>
+    </div>
+    <div class="decision-grid">
+      <article class="window-card">
+        <div class="window-head">
+          <div><div class="window-title" id="morningTitle">Morning · —</div><div class="window-target" id="morningTarget">—</div></div>
+          <div class="badge" id="morningBadge">Unavailable</div>
+        </div>
+        <div class="metric"><div class="metric-row"><div class="metric-label">PM2.5</div><div class="metric-main pm-window-value" id="morningAir">—</div><div class="metric-detail" id="morningAirDetail">—</div></div></div>
+        <div class="metric window-weather"><div class="metric-row"><div class="metric-label">WEATHER</div><div class="metric-main" id="morningHeat">—</div><div class="metric-detail" id="morningWeatherDetail">—</div></div></div>
+        <div class="window-foot"><span class="recheck" id="morningRecheck">Forecasted at —</span></div>
+      </article>
+      <article class="window-card">
+        <div class="window-head">
+          <div><div class="window-title" id="afternoonTitle">Afternoon · —</div><div class="window-target" id="afternoonTarget">—</div></div>
+          <div class="badge" id="afternoonBadge">Unavailable</div>
+        </div>
+        <div class="metric"><div class="metric-row"><div class="metric-label">PM2.5</div><div class="metric-main pm-window-value" id="afternoonAir">—</div><div class="metric-detail" id="afternoonAirDetail">—</div></div></div>
+        <div class="metric window-weather"><div class="metric-row"><div class="metric-label">WEATHER</div><div class="metric-main" id="afternoonHeat">—</div><div class="metric-detail" id="afternoonWeatherDetail">—</div></div></div>
+        <div class="window-foot"><span class="recheck" id="afternoonRecheck">Forecasted at —</span></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <div><h2 id="tennisTitle">Tennis Morning · 07:00–09:00</h2><div class="note" id="tennisTarget">—</div></div>
+      <div class="badge" id="tennisBadge">Unavailable</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="slabel">Rain chance</div><div id="tennisRain" class="svalue">—</div></div>
+      <div class="stat"><div class="slabel">Feels like</div><div id="tennisFeels" class="svalue">—</div></div>
+      <div class="stat"><div class="slabel">Wind</div><div id="tennisWind" class="svalue">—</div></div>
+    </div>
+  </section>
+</main>
+
+<script>
+// Build rule (build_web.py): no template literals here; comments on their own lines only.
+const REFRESH=180,RETRY=30,RELOAD_ON_RETURN=30;
+const MAX_FORECAST_AGE=600,SENSOR_OLD_AFTER=720;
+const TZ="Asia/Kuala_Lumpur";
+const PARTICLE_SERIES=[
+  {field:"pm25_ugm3",label:"PM2.5",unit:"µg/m³",color:"#79c0ff"},
+  {field:"pm10_ugm3",label:"PM10",unit:"µg/m³",color:"#ffa657"}
+];
+const HEAT_SERIES=[
+  {field:"temperature_c",label:"Temperature",unit:"°C",color:"#7ee787"},
+  {field:"heat_index_c",label:"Heat index",unit:"°C",color:"#ff7b72"}
+];
+const ARRIVAL_FIELDS=[["fall20","arrivalFall20"],["fall40","arrivalFall40"],["rise20","arrivalRise20"],["rise40","arrivalRise40"],["within20","arrivalWithin20"]];
+
+let nextRefreshAt=Date.now()+REFRESH*1000;
+let refreshPromise=null;
+let lastLoadAt=0;
+let historyRequest=0;
+let storedHistoryLoaded=false;
+let selectedHours=6;
+let histHours=6;
+let hist=[];
+let historyGaps=[];
+let forecastState="preparing";
+let forecastLoadError=null;
+let forecastIssued=null;
+let forecastAgeAtReceipt=null;
+let forecastReceivedAt=0;
+
+const $=id=>document.getElementById(id);
+const set=(id,text)=>{const e=$(id);if(e.textContent!==text)e.textContent=text};
+const isNum=v=>typeof v==="number"&&Number.isFinite(v);
+const isEpoch=v=>isNum(v)&&v>0;
+const isProbability=v=>isNum(v)&&v>=0&&v<=1;
+const usable=w=>w?.available===true&&w.fresh!==false;
+function f(v,d=1){
+  if(!isNum(v))return "—";
+  return v.toFixed(d).replace(/\.0$/,"");
+}
+function formatter(options){
+  const format=new Intl.DateTimeFormat("en-GB",{timeZone:TZ,...options});
+  return epoch=>format.format(new Date(epoch*1000));
+}
+const clock=formatter({hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+const clockSeconds=formatter({hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"});
+const day=formatter({day:"numeric",month:"short"});
+const weekday=formatter({weekday:"short",day:"numeric",month:"short"});
+const stamp=epoch=>day(epoch)+" "+clock(epoch);
+const percent=p=>p>0&&p<.001?"<0.1%":f(p*100,1)+"%";
+const timeSpan=(start,end)=>isEpoch(start)&&isEpoch(end)?clock(start)+"–"+clock(end):null;
+
+async function getJSON(url){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),30000);
+  try{
+    const r=await fetch(url,{cache:"no-store",signal:controller.signal});
+    const txt=await r.text();
+    let data;
+    try{data=JSON.parse(txt)}catch{throw new Error("Device returned non-JSON: "+txt.slice(0,120))}
+    if(!r.ok)throw new Error(data.error||("HTTP "+r.status));
+    return data
+  }catch(e){
+    if(e.name==="AbortError")throw new Error("request timed out");
+    throw e
+  }finally{clearTimeout(timeout)}
+}
+
+function renderCurrent(d){
+  const c=d.current||{},ok=c.available===true;
+  set("pm02",ok?f(c.pm25_ugm3):"—");
+  set("heatindex",ok?f(c.heat_index_c):"—");
+  set("particleLoad",!ok?"Sensor reading unavailable":typeof c.display_text==="string"&&c.display_text?c.display_text:"Status unavailable");
+  set("heatContext","Temperature "+(ok?f(c.temperature_c):"—")+" °C · humidity "+(ok?f(c.humidity_pct,0):"—")+"%");
+  const age=ok&&isEpoch(c.observed_epoch)&&isNum(servedAt(d))?Math.max(0,servedAt(d)-c.observed_epoch):null;
+  if(age==null){
+    $("dot").className="dot bad";
+    set("status","Sensor reading unavailable");
+  }else if(c.fresh===false||age>SENSOR_OLD_AFTER){
+    $("dot").className="dot bad";
+    set("status","Sensor data is "+Math.round(age/60)+" min old");
+  }else{
+    $("dot").className="dot ok";
+    set("status","Sensor online · "+clockSeconds(c.observed_epoch));
+  }
+}
+
+function renderArrivalChange(near,issued,message){
+  const change=near.arrival_change||{};
+  const ok=change.available===true&&typeof change.display_text==="string"&&change.display_text!==""
+    &&ARRIVAL_FIELDS.every(([field])=>isProbability(change[field]));
+  set("arrivalChangeSignal",ok?change.display_text:message||"Arrival change forecast unavailable");
+  $("arrivalChangeProbabilities").hidden=!ok;
+  ARRIVAL_FIELDS.forEach(([field,id])=>set(id,ok?percent(change[field]):"—"));
+  const target=near.available===true&&isEpoch(near.target_epoch)?near.target_epoch:ok&&isEpoch(change.arrival_epoch)?change.arrival_epoch:null;
+  if(target==null){set("arrivalChangeClock","");return}
+  const reference=ok&&isNum(change.reference_ugm3)?" · from "+f(change.reference_ugm3)+" µg/m³":"";
+  set("arrivalChangeClock",stamp(target)+reference+(isEpoch(issued)?" · issued "+clock(issued):""));
+}
+
+function renderSession(key,label,session,live,message){
+  const s=session||{},pm=live&&s.pm||{},w=s.weather||{};
+  const times=timeSpan(s.start_epoch,s.end_epoch);
+  set(key+"Title",label+" · "+(times||"—"));
+  set(key+"Target",times?weekday(s.start_epoch)+" · exact "+times:"—");
+  const pmOk=pm.available===true&&isNum(pm.pm25_ugm3);
+  set(key+"Badge",pmOk?"Model output":"Unavailable");
+  set(key+"Air",pmOk?f(pm.pm25_ugm3)+" µg/m³":"—");
+  set(key+"AirDetail",pmOk?"Exact 2-hour mean · direct model output":message||"Model output unavailable");
+  if(usable(w)){
+    set(key+"Heat","Feels like "+f(w.feels_like_max_c,0)+" °C · humidity "+f(w.humidity_mean_pct,0)+"%");
+    const amount=isNum(w.rain_mm)&&w.rain_mm>0?" · "+f(w.rain_mm)+" mm":"";
+    set(key+"WeatherDetail","wind "+f(w.wind_mean_kmh)+" km/h · gusts "+f(w.gust_max_kmh)+" km/h · peak hourly rain chance "+f(w.rain_chance_max_pct,0)+"%"+amount);
+  }else{
+    set(key+"Heat","Forecast unavailable");
+    set(key+"WeatherDetail","No modeled weather values for this session");
+  }
+  set(key+"Recheck","Forecasted at "+(isEpoch(s.issued_epoch)?stamp(s.issued_epoch):"—"));
+}
+
+function renderForecast(fc,message){
+  const live=fc.available===true&&fc.fresh!==false;
+  const near=live&&fc.near90||{};
+  const rideAll=fc.ride90_210||{},ride=live?rideAll:{};
+  const issued=live?fc.issued_epoch:null;
+  set("arrivalValue",near.available===true?f(near.pm25_ugm3):"—");
+  renderArrivalChange(near,issued,message);
+  const extrema=ride.minimum_maximum||{};
+  const rangeOk=extrema.available===true&&isNum(extrema.minimum_ugm3)&&isNum(extrema.maximum_ugm3);
+  set("trailRange",rangeOk?f(extrema.minimum_ugm3)+"–"+f(extrema.maximum_ugm3):"—");
+  set("trailSignal",rangeOk?"Predicted lowest–highest":message||"Lowest–highest model output unavailable");
+  set("trailMean",ride.available===true&&isNum(ride.pm25_ugm3)?f(ride.pm25_ugm3)+" µg/m³":"—");
+  const chance=ride.mean_le70||{};
+  set("cyclingProbability",chance.available===true&&isProbability(chance.probability)?f(chance.probability*100)+"%":"—");
+  set("cyclingWindowClock",isEpoch(ride.start_epoch)&&isEpoch(ride.end_epoch)?stamp(ride.start_epoch)+"–"+stamp(ride.end_epoch)+(isEpoch(issued)?" · issued "+stamp(issued):""):"");
+  const w=rideAll.weather;
+  set("trailWeatherSignal",usable(w)?"Ride window · wind "+f(w.wind_mean_kmh)+" km/h · gusts "+f(w.gust_max_kmh)+" km/h · rain "+f(w.rain_chance_max_pct,0)+"%":message||"Ride-window weather unavailable");
+  renderSession("morning","Morning",fc.sessions?.morning,live,message);
+  renderSession("afternoon","Afternoon",fc.sessions?.afternoon,live,message);
+}
+
+function servedAt(d){return isNum(d.served_epoch)?d.served_epoch:d.generated_epoch}
+
+function anyForecastOutput(fc){
+  const ride=fc.ride90_210||{},s=fc.sessions||{},m=s.morning||{},a=s.afternoon||{};
+  const shown=x=>!!x&&x.available===true;
+  return shown(fc.near90)||shown((fc.near90||{}).arrival_change)||shown(ride)||shown(ride.minimum_maximum)||shown(ride.mean_le70)
+    ||shown(m.pm)||shown(a.pm);
+}
+
+function applyForecast(d){
+  const fc=d.forecast||{};
+  const hasIssue=isEpoch(fc.issued_epoch)&&isNum(servedAt(d));
+  forecastLoadError=null;
+  forecastIssued=hasIssue?fc.issued_epoch:null;
+  forecastAgeAtReceipt=hasIssue?Math.max(0,servedAt(d)-fc.issued_epoch):null;
+  forecastReceivedAt=Date.now();
+  const available=hasIssue&&fc.available===true&&fc.fresh!==false&&anyForecastOutput(fc);
+  if(available&&forecastAgeAtReceipt>MAX_FORECAST_AGE){
+    forecastState="expired";
+    renderForecast({},"Forecast expired");
+  }else{
+    forecastState=available?"ready":"unavailable";
+    renderForecast(fc);
+  }
+}
+
+function forecastAge(){
+  return forecastAgeAtReceipt==null?null:Math.max(0,forecastAgeAtReceipt+(Date.now()-forecastReceivedAt)/1000);
+}
+
+function updateForecastStatus(){
+  const age=forecastAge();
+  if(forecastState==="ready"&&age>MAX_FORECAST_AGE){
+    forecastState="expired";
+    renderForecast({},"Forecast expired");
+  }
+  const failed=forecastLoadError!=null;
+  const label=forecastState==="expired"?"Forecast expired":
+    forecastState==="unavailable"?"Forecast unavailable":
+    forecastState==="ready"?(failed?"Forecast refresh failed · showing last forecast":"Forecast ready"):
+    failed?"Forecast unavailable · retrying…":"Preparing forecast…";
+  set("forecastStatus",label);
+  $("forecastStatus").className=failed||forecastState==="expired"||forecastState==="unavailable"?"error":"";
+  $("forecastStatus").title=forecastLoadError||"";
+  set("forecastAge",forecastIssued!=null&&age!=null?"· issued "+clock(forecastIssued)+" · "+(age<60?"just now":Math.floor(age/60)+" min old"):"");
+}
+
+function renderTennis(t){
+  const ok=usable(t);
+  const times=timeSpan(t?.start_epoch,t?.end_epoch);
+  set("tennisTitle","Tennis Morning · "+(times||"07:00–09:00"));
+  set("tennisBadge",ok?"Weather forecast":"Unavailable");
+  set("tennisTarget",(ok&&isEpoch(t.start_epoch)?weekday(t.start_epoch):"—")+(ok&&isEpoch(t.fetched_epoch)?" · forecasted at "+stamp(t.fetched_epoch):""));
+  set("tennisRain",ok&&isNum(t.rain_chance_max_pct)?f(t.rain_chance_max_pct,0)+"%":"—");
+  set("tennisFeels",ok&&isNum(t.feels_like_max_c)?f(t.feels_like_max_c)+" °C":"—");
+  set("tennisWind",ok&&isNum(t.wind_mean_kmh)?f(t.wind_mean_kmh)+" km/h":"—");
+}
+
+async function loadWeather(){
+  let d;
+  try{d=await getJSON("weather")}catch(e){
+    $("dot").className="dot bad";
+    set("status","Sensor refresh failed · "+e.message);
+    forecastLoadError=e.message;
+    updateForecastStatus();
+    throw e
+  }
+  renderCurrent(d);
+  applyForecast(d);
+  renderTennis(d.tennis_morning);
+  updateForecastStatus();
+}
+
+function showStoredHistory(days){
+  if(!isNum(days))return;
+  const hours=Math.max(0,days*24);
+  set("historyStatus",hours<48?hours.toFixed(1)+" h":(hours/24).toFixed(1)+" d");
+  storedHistoryLoaded=true;
+}
+
+function rowsFromPoints(d,gaps){
+  const columns=d.columns||[];
+  const rows=(d.points||[]).map(point=>Object.fromEntries(columns.map((name,i)=>[name,point[i]]))).filter(row=>isEpoch(row.epoch));
+  let segment=0;
+  rows.forEach((row,i)=>{
+    if(i&&gaps.some(([from,to])=>rows[i-1].epoch<to&&row.epoch>from))segment++;
+    row.segment=segment;
+  });
+  return rows;
+}
+
+async function loadHistory(){
+  const request=++historyRequest;
+  const hours=selectedHours;
+  let d;
+  try{d=await getJSON("history?hours="+hours)}catch(e){
+    if(request===historyRequest){
+      set("historyLoadStatus","History refresh failed · "+e.message);
+      if(!storedHistoryLoaded)set("historyStatus","unavailable");
+    }
+    throw e
+  }
+  if(request!==historyRequest)return;
+  set("historyLoadStatus","Showing "+(hours<48?hours+" h":hours/24+" d")+" of sensor history");
+  showStoredHistory(d.stored_days);
+  historyGaps=(d.gaps||[]).filter(g=>Array.isArray(g)&&isNum(g[0])&&isNum(g[1]));
+  hist=rowsFromPoints(d,historyGaps);
+  histHours=hours;
+  const s=d.summary||{},ok=s.available===true;
+  const ug=v=>ok&&isNum(v)?f(v)+" µg/m³":"—";
+  set("pmAvg",ug(s.average_ugm3));
+  set("pmMin",ug(s.lowest_ugm3));
+  set("pmMax",ug(s.highest_ugm3));
+  set("particleSummary",ok&&isNum(s.average_ugm3)?"PM2.5 avg "+f(s.average_ugm3)+" µg/m³":"collecting…");
+  const gap=historyGaps[historyGaps.length-1];
+  set("collectionCoverage",gap?"Last collection gap: "+stamp(gap[0])+"–"+clock(gap[1])+" · "+f((gap[1]-gap[0])/60,0)+" min · not filled":"");
+  drawCharts();
+}
+
+function draw(canvas,series){
+  const rect=canvas.getBoundingClientRect(),dpr=Math.max(1,window.devicePixelRatio||1);
+  canvas.width=Math.round(rect.width*dpr);
+  canvas.height=Math.round(rect.height*dpr);
+  const c=canvas.getContext("2d");
+  c.setTransform(dpr,0,0,dpr,0,0);
+  const w=rect.width,h=rect.height,p={l:43,r:10,t:15,b:28},pw=w-p.l-p.r,ph=h-p.t-p.b;
+  const vals=[];
+  hist.forEach(r=>series.forEach(s=>{if(isNum(r[s.field]))vals.push(r[s.field])}));
+  c.clearRect(0,0,w,h);
+  if(hist.length<2||!vals.length){
+    canvas._chartMeta=null;
+    c.fillStyle="#a7afb7";c.font="13px system-ui";c.fillText("Collecting history…",p.l,h/2);return
+  }
+  let lo=Math.min(...vals),hi=Math.max(...vals);
+  if(hi<=lo)hi=lo+1;
+  const m=Math.max((hi-lo)*.12,1);lo=Math.max(0,lo-m);hi+=m;
+  const t0=hist[0].epoch,t1=hist[hist.length-1].epoch;
+  const x=t=>p.l+((t-t0)/(t1-t0||1))*pw,y=v=>p.t+(1-(v-lo)/(hi-lo))*ph;
+  c.strokeStyle="#30363b";c.fillStyle="#8f979f";c.lineWidth=1;c.font="11px system-ui";
+  for(let i=0;i<=4;i++){
+    const yy=p.t+ph*i/4;c.beginPath();c.moveTo(p.l,yy);c.lineTo(w-p.r,yy);c.stroke();
+    c.fillText(f(hi-(hi-lo)*i/4),3,yy+4)
+  }
+  series.forEach(s=>{
+    const has=i=>i>=0&&i<hist.length&&isNum(hist[i][s.field]);
+    const joined=(a,b)=>has(a)&&has(b)&&hist[a].segment===hist[b].segment;
+    c.strokeStyle=s.color;c.fillStyle=s.color;c.lineWidth=2;c.lineJoin="round";c.beginPath();
+    hist.forEach((r,i)=>{
+      if(!has(i))return;
+      const xx=x(r.epoch),yy=y(r[s.field]);
+      if(joined(i-1,i))c.lineTo(xx,yy);else c.moveTo(xx,yy);
+    });
+    c.stroke();
+    // A reading with no joined neighbour would otherwise leave no mark.
+    hist.forEach((r,i)=>{
+      if(!has(i)||joined(i-1,i)||joined(i,i+1))return;
+      c.beginPath();c.arc(x(r.epoch),y(r[s.field]),2,0,Math.PI*2);c.fill();
+    });
+  });
+  c.fillStyle="#8f979f";
+  const labels=[t0,(t0+t1)/2,t1];
+  ["left","center","right"].forEach((align,i)=>{
+    c.textAlign=align;
+    c.fillText(histHours>48?day(labels[i]):clock(labels[i]),x(labels[i]),h-6)
+  });
+  c.textAlign="left";
+  canvas._chartMeta={t0,t1,p,pw,w,h,series}
+}
+
+function drawCharts(){
+  draw($("particleChart"),PARTICLE_SERIES);
+  draw($("heatChart"),HEAT_SERIES);
+}
+
+function setupChartHover(canvas,tooltip){
+  const show=event=>{
+    const m=canvas._chartMeta;
+    if(!m||!hist.length||event.offsetX<m.p.l||event.offsetX>m.w-m.p.r){tooltip.hidden=true;return}
+    const target=m.t0+((event.offsetX-m.p.l)/m.pw)*(m.t1-m.t0);
+    if(historyGaps.some(([from,to])=>target>from&&target<to)){tooltip.hidden=true;return}
+    let reading=hist[0],distance=Math.abs(hist[0].epoch-target);
+    for(const r of hist){
+      const d=Math.abs(r.epoch-target);
+      if(d<distance){reading=r;distance=d}
+    }
+    const heading=document.createElement("strong");
+    heading.textContent=stamp(reading.epoch);
+    const lines=m.series.map(s=>{
+      const line=document.createElement("div");
+      line.textContent=s.label+": "+f(reading[s.field])+" "+s.unit;
+      return line
+    });
+    tooltip.replaceChildren(heading,...lines);
+    tooltip.hidden=false;
+    const box=canvas.parentElement;
+    const left=Math.min(canvas.offsetLeft+event.offsetX+12,box.clientWidth-tooltip.offsetWidth-8);
+    const top=Math.max(38,canvas.offsetTop+event.offsetY-tooltip.offsetHeight-10);
+    tooltip.style.left=Math.max(8,left)+"px";
+    tooltip.style.top=top+"px"
+  };
+  canvas.addEventListener("pointermove",show);
+  canvas.addEventListener("pointerdown",show);
+  canvas.addEventListener("mouseleave",()=>{tooltip.hidden=true})
+}
+
+// One request at a time: the device serves connections in turn.
+async function refreshAll(){
+  lastLoadAt=Date.now();
+  let failed=false;
+  for(const load of [loadWeather,loadHistory]){
+    try{await load()}catch(e){console.error(e);failed=true}
+  }
+  nextRefreshAt=Date.now()+(failed?RETRY:REFRESH)*1000;
+}
+function loadAll(){
+  if(refreshPromise)return refreshPromise;
+  refreshPromise=refreshAll().finally(()=>{refreshPromise=null});
+  return refreshPromise
+}
+
+// The device answers at once and collects afterwards, so wait for the new payload.
+async function fetchNow(){
+  const button=$("fetchNow");
+  if(button.disabled)return;
+  button.disabled=true;
+  set("status","Fetching now…");
+  try{
+    const before=(await getJSON("weather")).generated_epoch;
+    await fetch("refresh",{method:"POST"});
+    const end=Date.now()+45000;
+    while(Date.now()<end){
+      await new Promise(r=>setTimeout(r,3000));
+      const d=await getJSON("weather").catch(()=>null);
+      if(d&&d.generated_epoch>before)break;
+    }
+  }catch(e){console.error(e)}
+  button.disabled=false;
+  loadAll();
+}
+$("fetchNow").addEventListener("click",fetchNow);
+document.querySelectorAll("#ranges button").forEach(b=>b.addEventListener("click",async()=>{
+  const mark=target=>document.querySelectorAll("#ranges button").forEach(x=>{const on=x===target;x.classList.toggle("active",on);x.setAttribute("aria-pressed",on?"true":"false")});
+  const previousHours=selectedHours,previousButton=document.querySelector("#ranges button.active");
+  mark(b);
+  selectedHours=Number(b.dataset.h);
+  try{await loadHistory()}catch(e){
+    console.error(e);
+    // Keep the highlighted range honest: the charts still show the previous period.
+    selectedHours=previousHours;
+    mark(previousButton);
+  }
+}));
+setInterval(()=>{
+  const left=Math.max(0,Math.ceil((nextRefreshAt-Date.now())/1000));
+  if(left<=0&&!document.hidden)loadAll();
+  updateForecastStatus();
+  set("countdown",Math.floor(left/60)+":"+String(left%60).padStart(2,"0"));
+},1000);
+document.addEventListener("visibilitychange",()=>{
+  if(!document.hidden&&Date.now()-lastLoadAt>RELOAD_ON_RETURN*1000)loadAll();
+});
+window.addEventListener("resize",drawCharts);
+setupChartHover($("particleChart"),$("particleTooltip"));
+setupChartHover($("heatChart"),$("heatTooltip"));
+loadAll();
+</script>
+</body>
+</html>

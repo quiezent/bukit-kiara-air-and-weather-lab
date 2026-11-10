@@ -19,12 +19,14 @@ At the owner's request, the forecasting-server and ESP32-device Codex workstream
 | Workstream | Primary responsibility |
 |---|---|
 | Forecasting server | Sensor collection and database provenance, predictive models, target definitions, evaluation, server APIs and forecasting evidence |
-| ESP32 device | Firmware, display, speech recognition, readouts, audio, hardware integration and device evidence |
-| Shared | Server/device contract, end-to-end meaning, README, publication scope and project direction |
+| ESP32 device | Firmware, on-device collection and training, display, readouts, audio, hardware integration and device evidence |
+| Shared | Model parity between server and device, the shared payload meaning, README, publication scope and project direction |
+
+Since firmware 40 (10 November 2026) the device collects and forecasts by itself and no longer reads the server's API. Its models are ports of the server's. The server in `app/` stays the reference implementation, so a model or target change on one side needs the matching port and a parity check on the other.
 
 The primary objective is advance warning of substantial PM2.5 falls or rises before the rider starts preparing. The +90-minute value supports the arrival judgment; the following two-hour forecast provides ride context. The October 8 source implements learned ≥20/≥40 arrival-change probabilities. Their implementation does not establish reliable advance warning; evaluate misses, false calls and useful lead time against original issued forecasts.
 
-For changes crossing the interface, coordinate model/output semantics, API versions, units, issue/reference/target clocks, unavailable or stale data and the device's payload budget. Verify affected display and spoken behavior against the same issued server data. A presentation change must preserve the model output's meaning; it must not manufacture a probability or silently substitute a different PM2.5 number.
+For changes crossing the server and the device, coordinate model/output semantics, payload schema versions, units, issue/reference/target clocks, unavailable or stale data and the device's memory and payload budgets. Verify affected display and spoken behavior against the same model output. A presentation change must preserve the model output's meaning; it must not manufacture a probability or silently substitute a different PM2.5 number.
 
 Write journal entries in the contributor's first-person developer voice and identify the workstream. State what that contributor actually verified and attribute findings from the other workstream. Retain earlier chapters and evidence with their original dates; later findings belong in dated additions or clearly identified corrections.
 
