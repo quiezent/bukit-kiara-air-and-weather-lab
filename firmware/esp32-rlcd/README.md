@@ -139,7 +139,7 @@ The point heads need a fresh sensor reading, a wind run issued within the last t
 
 Measured on the owner's board running v40 on 10 November 2026:
 
-- **CPU:** about 1.5% (core 0) and 1.8% (core 1) busy in each sampled minute of normal running at 240 MHz (1.2–2.1% and 1.7–1.9% over the first half hour of v39 and v40); counting the boot, v39 averaged 4.9% and 2.0% over its first 29 minutes. The nightly refit runs on core 1 for about 14 minutes; these figures do not include it.
+- **CPU:** averaged over the first 53 minutes of v40 at 240 MHz, boot included, 4.9% (core 0) and 2.0% (core 1) busy. Core 0 runs the collection: most minutes are under 2.5%, and the minutes with a neighbour-station pass (six TLS handshakes every 5 minutes) reach about 7–11%. The nightly refit runs on core 1 for about 14 minutes; these figures do not include it.
 - **Memory:** about 186 KB of internal RAM free (lowest since boot about 119 KB); about 6.9 MB of the 8 MB PSRAM free when idle; about 12 KB free on the collection task's stack.
 - **Flash:** the private v40 image is 6,282,595 bytes, 85% of the 7 MiB slot, mostly the recorded speech clips. The public image's size depends on the eSpeak NG clips you generate (see Verification). Storage: about 3.9 MB of 9.37 MB with 30 days of readings.
 

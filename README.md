@@ -26,7 +26,7 @@ A forecast that responds after particles have already fallen has not demonstrate
   - **The port matches the server.** The board's arrival classifier matched the server's own model to a worst probability gap of 5.7e-9 on identical inputs, the training rows matched the server's, and at a live issue clock the device's and server's point forecasts differed only through sensor poll timing.
   - **It shows no gain in skill.** Replayed on the server's issued records from 14 October to 9 November, the new session model ties persistence and the PatchTST it replaces on Afternoon, and ties the issued Morning card. The point and arrival heads are the same recipes, and the 7 November scorecard below still describes them.
   - **Not yet verified:** a multi-day soak on the board and battery life.
-- **On the chip:** about 1.5% and 1.8% CPU on its two cores in sampled minutes of normal running, about 186 KB of internal RAM and 6.9 MB of PSRAM free, and about 3.9 MB of 9.37 MB of storage used with 30 days of readings. The nightly refit takes about 14 minutes.
+- **On the chip:** about 5% and 2% average CPU on its two cores (most minutes under 2.5%), about 186 KB of internal RAM and 6.9 MB of PSRAM free, and about 3.9 MB of 9.37 MB of storage used with 30 days of readings. The nightly refit takes about 14 minutes.
 - **Read** the [firmware README](firmware/esp32-rlcd/README.md), the [device interface](firmware/esp32-rlcd/docs/API.md), the [model card section](docs/MODEL_CARD.md#the-models-on-the-desk-display--10-november-2026) and my [journal entry](docs/journal/2026-11-10-moving-the-forecast-onto-the-desk-display.md).
 
 ## Release of 7 November 2026

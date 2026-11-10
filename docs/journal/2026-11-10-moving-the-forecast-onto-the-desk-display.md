@@ -47,7 +47,7 @@ Before v40 a separate review went through the integrated firmware and confirmed 
 
 ## What it costs the chip
 
-In normal running at 240 MHz the two cores are about 1.5% and 1.8% busy; counting the boot, the first half hour averaged 4.9% and 2.0%. About 186 KB of internal RAM and 6.9 MB of the 8 MB PSRAM stay free, and 30 days of readings take about 3.9 MB of flash. The nightly refit takes about 13.9 minutes, most of it the point model, and the forecasts read unavailable until it finishes. Low CPU load is not the same as low power, because the Wi-Fi radio stays associated, and I have not measured the battery.
+Averaged over its first 53 minutes at 240 MHz, boot included, v40 kept the two cores 4.9% and 2.0% busy. Most minutes are under 2.5%; the collection core reaches 7–11% in the minutes when it opens six TLS connections to the neighbouring stations. About 186 KB of internal RAM and 6.9 MB of the 8 MB PSRAM stay free, and 30 days of readings take about 3.9 MB of flash. The nightly refit takes about 13.9 minutes, most of it the point model, and the forecasts read unavailable until it finishes. Low CPU load is not the same as low power, because the Wi-Fi radio stays associated, and I have not measured the battery.
 
 ## What I have not verified
 

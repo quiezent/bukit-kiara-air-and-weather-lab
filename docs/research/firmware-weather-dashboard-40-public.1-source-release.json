@@ -34,7 +34,7 @@
     "firmware/esp32-rlcd/LICENSES/Waveshare-Apache-2.0.txt": "bb01037d243b2614f6c0bcf65671eff4a004b65ef687a4fd4925a9ab068bd613",
     "firmware/esp32-rlcd/LICENSES/eSpeak-NG-GPL-3.0.txt": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
     "firmware/esp32-rlcd/LICENSES/scikit-learn-BSD-3-Clause.txt": "75684d16f4662ab842ed5af9482ac01939aee83c8243d89993616d959d3053f8",
-    "firmware/esp32-rlcd/README.md": "27d1fb71f65fa2a35d3fdd049f01930d9c18a8d24bd8cb93529f72b0496ed7f8",
+    "firmware/esp32-rlcd/README.md": "b70a9e90e19a80bcdc127270198755e003b4b20b6b755368eaa675d272bcf5bf",
     "firmware/esp32-rlcd/THIRD_PARTY_NOTICES.md": "bedccaee59aa5ffedace3d2c8edb4abdcb2dd4018534525eac5e2f17381fe590",
     "firmware/esp32-rlcd/WeatherDashboard/ArrivalChange.h": "6b96f79772b07c3865f7a94e3eb5dfb3959bff124fe737b485f470167765b4d9",
     "firmware/esp32-rlcd/WeatherDashboard/ArrivalLogistic.h": "74bb9387e7830eb064719fc71f205b7af003b44cb74d1aaae551bde24d887d28",
